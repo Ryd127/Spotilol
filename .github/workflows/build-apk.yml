@@ -1,0 +1,286 @@
+name: Build Spotilol APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  ANDROID_PLATFORM: '37'
+  ANDROID_BUILD_TOOLS: '36.0.0'
+  ANDROID_NDK: '28.2.13676358'
+  ANDROID_CMAKE: '3.22.1'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v7
+
+      - name: Verify Gradle wrapper integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs
+          expected_jar_sha="7a9ce74cff467ca1bf60a4fcd9f05185acceda4d0f382434d393e17864262c5d"
+          actual_jar_sha="$(sha256sum gradle/wrapper/gradle-wrapper.jar | awk '{print $1}')"
+          {
+            echo "Expected wrapper JAR SHA-256: ${expected_jar_sha}"
+            echo "Actual wrapper JAR SHA-256:   ${actual_jar_sha}"
+            grep '^distributionUrl=' gradle/wrapper/gradle-wrapper.properties
+            grep '^distributionSha256Sum=' gradle/wrapper/gradle-wrapper.properties
+          } | tee ci-logs/gradle-wrapper-integrity.log
+          [[ "$actual_jar_sha" == "$expected_jar_sha" ]]
+          grep -F -x -q 'distributionUrl=https\://services.gradle.org/distributions/gradle-9.7.1-bin.zip' gradle/wrapper/gradle-wrapper.properties
+          grep -F -x -q 'distributionSha256Sum=acd53f1edaf02f1a8ff99879f8a34b302661a057d9b063ae9e35b552f804d20a' gradle/wrapper/gradle-wrapper.properties
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK command-line tools
+        uses: android-actions/setup-android@v4
+        with:
+          # Install exact packages ourselves below so the log clearly shows which SDK component
+          # failed if Google changes repository metadata or a runner image changes.
+          packages: ''
+
+      - name: Install exact Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs
+          {
+            echo "ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT:-}"
+            echo "ANDROID_HOME=${ANDROID_HOME:-}"
+            echo "sdkmanager=$(command -v sdkmanager || true)"
+            sdkmanager --version
+            yes | sdkmanager --licenses >/dev/null || true
+            sdkmanager --install \
+              "platform-tools" \
+              "platforms;android-${ANDROID_PLATFORM}" \
+              "build-tools;${ANDROID_BUILD_TOOLS}" \
+              "ndk;${ANDROID_NDK}" \
+              "cmake;${ANDROID_CMAKE}"
+            echo "sdk.dir=${ANDROID_SDK_ROOT}" > local.properties
+            echo "Installed/available packages:"
+            sdkmanager --list
+          } 2>&1 | tee ci-logs/android-sdk.log
+
+          test -f "${ANDROID_SDK_ROOT}/platforms/android-${ANDROID_PLATFORM}/android.jar"
+          test -x "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
+          test -x "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/zipalign"
+          test -x "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/apksigner"
+          test -d "${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK}"
+          test -d "${ANDROID_SDK_ROOT}/cmake/${ANDROID_CMAKE}"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: Record build environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs
+          {
+            echo '=== Java ==='
+            java -version
+            echo '=== Gradle wrapper ==='
+            ./gradlew --no-daemon --version
+            echo '=== Android build tools ==='
+            "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/aapt2" version
+            "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/zipalign" -h 2>&1 | head -5 || true
+            echo '=== NDK ==='
+            cat "${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK}/source.properties"
+            echo '=== CMake ==='
+            "${ANDROID_SDK_ROOT}/cmake/${ANDROID_CMAKE}/bin/cmake" --version
+          } 2>&1 | tee ci-logs/environment.log
+
+      - name: Resolve critical release dependencies
+        id: dependency_audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs
+          {
+            echo '=== releaseRuntimeClasspath ==='
+            ./gradlew --no-daemon --console=plain :app:dependencies --configuration releaseRuntimeClasspath
+            for dep in graphics-path graphics-shapes datastore work-runtime room-runtime glance-appwidget; do
+              echo
+              echo "=== dependencyInsight: ${dep} ==="
+              ./gradlew --no-daemon --console=plain :app:dependencyInsight \
+                --configuration releaseRuntimeClasspath \
+                --dependency "${dep}" || true
+            done
+          } 2>&1 | tee ci-logs/release-dependencies.log
+
+      - name: Analyze release R8 configuration
+        id: r8_audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs
+          ./gradlew --no-daemon --stacktrace --warning-mode all --console=plain :app:analyzeReleaseR8Config \
+            2>&1 | tee ci-logs/r8-config-analyzer.log
+
+      - name: Restore optional release signing key
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.SPOTILOL_KEYSTORE_B64 }}
+          STORE_PASSWORD: ${{ secrets.SPOTILOL_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SPOTILOL_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SPOTILOL_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -n "${KEYSTORE_B64:-}" && -n "${STORE_PASSWORD:-}" && -n "${KEY_ALIAS:-}" && -n "${KEY_PASSWORD:-}" ]]; then
+            mkdir -p keystore
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > keystore/release.jks
+            cat > keystore/keystore.properties <<EOF
+          storeFile=release.jks
+          storePassword=${STORE_PASSWORD}
+          keyAlias=${KEY_ALIAS}
+          keyPassword=${KEY_PASSWORD}
+          EOF
+            echo "Release signing key configured."
+          else
+            echo "No release signing secrets configured; release APK will remain unsigned."
+          fi
+
+      - name: Build debug APK
+        id: build_debug
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace --warning-mode all --console=plain :app:assembleDebug \
+            2>&1 | tee ci-logs/gradle-debug.log
+
+      - name: Build release APK
+        id: build_release
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs
+          chmod +x ./gradlew
+          ./gradlew --no-daemon --stacktrace --warning-mode all --console=plain :app:assembleRelease \
+            2>&1 | tee ci-logs/gradle-release.log
+
+      - name: Verify APK outputs
+        id: verify_apks
+        if: always()
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs
+          shopt -s nullglob
+          apks=(app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk)
+          if (( ${#apks[@]} == 0 )); then
+            echo "No APKs produced" | tee ci-logs/apk-verification.log >&2
+            exit 1
+          fi
+
+          : > SHA256SUMS.txt
+          : > ci-logs/apk-verification.log
+          for apk in "${apks[@]}"; do
+            {
+              echo "==> $apk"
+              sha256sum "$apk" | tee -a SHA256SUMS.txt
+
+              app_id="$(apkanalyzer manifest application-id "$apk" | tr -d '\r\n')"
+              version_name="$(apkanalyzer manifest version-name "$apk" | tr -d '\r\n')"
+              version_code="$(apkanalyzer manifest version-code "$apk" | tr -d '\r\n')"
+              min_sdk="$(apkanalyzer manifest min-sdk "$apk" | tr -d '\r\n')"
+              target_sdk="$(apkanalyzer manifest target-sdk "$apk" | tr -d '\r\n')"
+              debuggable="$(apkanalyzer manifest debuggable "$apk" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
+              echo "APK identity: id=${app_id} version=${version_name}(${version_code}) minSdk=${min_sdk} targetSdk=${target_sdk} debuggable=${debuggable}"
+              [[ "$app_id" == "com.project.lol" ]]
+              [[ "$version_name" == "1.1.8" ]]
+              [[ "$version_code" == "18" ]]
+              [[ "$min_sdk" == "28" ]]
+              [[ "$target_sdk" == "36" ]]
+              if [[ "$apk" == *"/debug/"* ]]; then
+                [[ "$debuggable" == "true" ]]
+              else
+                [[ "$debuggable" == "false" ]]
+              fi
+
+              "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/zipalign" -c -P 16 -v 4 "$apk" >/dev/null
+              python3 scripts/check_elf_alignment.py "$apk"
+              echo "Resolved AndroidX versions in APK:"
+              for meta in \
+                androidx.glance_glance.version \
+                androidx.glance_glance-appwidget.version \
+                androidx.datastore_datastore.version \
+                androidx.datastore_datastore-preferences.version \
+                androidx.graphics_graphics-path.version \
+                androidx.graphics_graphics-shapes.version \
+                androidx.work_work-runtime.version \
+                androidx.room_room-runtime.version; do
+                value="$(unzip -p "$apk" "META-INF/${meta}" 2>/dev/null | tr -d '\r\n' || true)"
+                printf '  %-55s %s\n' "$meta" "${value:-not-packaged}"
+              done
+              if "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --verbose "$apk" >/dev/null 2>&1; then
+                echo "Signature: valid"
+                "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --print-certs "$apk" | sed -n '1,12p'
+              elif [[ "$apk" == *"/debug/"* || -f keystore/keystore.properties ]]; then
+                echo "Signature: INVALID (debug APKs and configured signed releases must verify)" >&2
+                "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --verbose "$apk" || true
+                exit 1
+              else
+                echo "Signature: unsigned (expected for release when no signing secrets are configured)"
+              fi
+            } 2>&1 | tee -a ci-logs/apk-verification.log
+          done
+
+      - name: Upload APKs and CI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: spotilol-build-${{ github.run_number }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            app/build/outputs/apk/debug/*.apk
+            app/build/outputs/apk/release/*.apk
+            SHA256SUMS.txt
+            ci-logs/**
+            app/build/reports/r8/**
+            app/build/outputs/mapping/release/**
+
+      - name: Enforce build result
+        if: always()
+        shell: bash
+        env:
+          DEBUG_OUTCOME: ${{ steps.build_debug.outcome }}
+          RELEASE_OUTCOME: ${{ steps.build_release.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify_apks.outcome }}
+          DEPENDENCY_OUTCOME: ${{ steps.dependency_audit.outcome }}
+          R8_OUTCOME: ${{ steps.r8_audit.outcome }}
+        run: |
+          echo "Debug build:   ${DEBUG_OUTCOME}"
+          echo "Release build: ${RELEASE_OUTCOME}"
+          echo "APK verify:    ${VERIFY_OUTCOME}"
+          echo "Dependencies:  ${DEPENDENCY_OUTCOME}"
+          echo "R8 analyzer:   ${R8_OUTCOME}"
+          if [[ "$DEPENDENCY_OUTCOME" != "success" || "$R8_OUTCOME" != "success" || "$DEBUG_OUTCOME" != "success" || "$RELEASE_OUTCOME" != "success" || "$VERIFY_OUTCOME" != "success" ]]; then
+            echo "Spotilol build/verification failed. Download the spotilol-build artifact for full logs." >&2
+            exit 1
+          fi
