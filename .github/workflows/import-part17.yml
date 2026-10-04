@@ -6,6 +6,9 @@ on:
     paths:
       - '.part17-import/**'
       - '.github/workflows/import-part17.yml'
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened]
 
 permissions:
   contents: write
