@@ -85,6 +85,25 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    packaging {
+        jniLibs {
+            // Prefer the app-local, API-compatible rebuilds over the copies bundled
+            // by AndroidX AARs. They preserve the same SONAME/JNI surface while
+            // adding complete 16 KiB LOAD + RELRO alignment.
+            pickFirsts += setOf(
+                "**/libandroidx.graphics.path.so",
+                "**/libdatastore_shared_counter.so"
+            )
+        }
+    }
 }
 
 dependencies {
