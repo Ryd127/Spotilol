@@ -66,15 +66,16 @@ jobs:
             sdkmanager --version
             platform_package=""
             platform_dir=""
-            if sdkmanager --list | grep -Eq "^[[:space:]]*platforms;android-${ANDROID_PLATFORM}[[:space:]]"; then
+            sdkmanager --list > ci-logs/sdkmanager-packages-before-install.log
+            if grep -Eq "^[[:space:]]*platforms;android-${ANDROID_PLATFORM}[[:space:]]" ci-logs/sdkmanager-packages-before-install.log; then
               platform_package="platforms;android-${ANDROID_PLATFORM}"
               platform_dir="android-${ANDROID_PLATFORM}"
-            elif sdkmanager --list | grep -Eq "^[[:space:]]*platforms;android-${ANDROID_PLATFORM}\\.0[[:space:]]"; then
+            elif grep -Eq "^[[:space:]]*platforms;android-${ANDROID_PLATFORM}\\.0[[:space:]]" ci-logs/sdkmanager-packages-before-install.log; then
               platform_package="platforms;android-${ANDROID_PLATFORM}.0"
               platform_dir="android-${ANDROID_PLATFORM}.0"
             else
               echo "No installable Android SDK platform package found for API ${ANDROID_PLATFORM}." >&2
-              sdkmanager --list | grep -E "platforms;android-${ANDROID_PLATFORM}" || true
+              grep -E "platforms;android-${ANDROID_PLATFORM}" ci-logs/sdkmanager-packages-before-install.log || true
               exit 1
             fi
             echo "Resolved Android platform package: ${platform_package}"
