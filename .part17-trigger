@@ -1,1 +1,2 @@
 Trigger exact Part 17 bootstrap import via pull_request event.
+Retry: direct origin/main parent for fast-forward import.
