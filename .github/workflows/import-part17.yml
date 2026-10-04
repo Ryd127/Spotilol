@@ -33,16 +33,19 @@ jobs:
           test -f /tmp/spotilol-unpack/Spotilol-1.1.8/settings.gradle.kts
           test -f /tmp/spotilol-unpack/Spotilol-1.1.8/.github/workflows/build-apk.yml
 
-      - name: Replace bootstrap tree with exact Part 17 project
+      - name: Replace bootstrap tree with Part 17 source
         shell: bash
         run: |
           set -euo pipefail
+          cp .github/workflows/import-part17.yml /tmp/import-part17.yml
           git fetch origin main
           git checkout -B part17-import origin/main
           find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-          cp -a /tmp/spotilol-unpack/Spotilol-1.1.8/. .
+          rsync -a --exclude='.github/workflows/' /tmp/spotilol-unpack/Spotilol-1.1.8/ ./
+          mkdir -p .github/workflows
+          cp /tmp/import-part17.yml .github/workflows/import-part17.yml
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -m "Import Spotilol Part 17 RC"
+          git commit -m "Import Spotilol Part 17 RC source"
           git push origin HEAD:main
