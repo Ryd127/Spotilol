@@ -64,10 +64,27 @@ jobs:
             echo "ANDROID_HOME=${ANDROID_HOME:-}"
             echo "sdkmanager=$(command -v sdkmanager || true)"
             sdkmanager --version
+            platform_package=""
+            platform_dir=""
+            if sdkmanager --list | grep -Eq "^[[:space:]]*platforms;android-${ANDROID_PLATFORM}[[:space:]]"; then
+              platform_package="platforms;android-${ANDROID_PLATFORM}"
+              platform_dir="android-${ANDROID_PLATFORM}"
+            elif sdkmanager --list | grep -Eq "^[[:space:]]*platforms;android-${ANDROID_PLATFORM}\\.0[[:space:]]"; then
+              platform_package="platforms;android-${ANDROID_PLATFORM}.0"
+              platform_dir="android-${ANDROID_PLATFORM}.0"
+            else
+              echo "No installable Android SDK platform package found for API ${ANDROID_PLATFORM}." >&2
+              sdkmanager --list | grep -E "platforms;android-${ANDROID_PLATFORM}" || true
+              exit 1
+            fi
+            echo "Resolved Android platform package: ${platform_package}"
+            echo "Resolved Android platform directory: ${platform_dir}"
+            echo "SPOTILOL_ANDROID_PLATFORM_DIR=${platform_dir}" >> "${GITHUB_ENV}"
+
             yes | sdkmanager --licenses >/dev/null || true
             sdkmanager --install \
               "platform-tools" \
-              "platforms;android-${ANDROID_PLATFORM}" \
+              "${platform_package}" \
               "build-tools;${ANDROID_BUILD_TOOLS}" \
               "ndk;${ANDROID_NDK}" \
               "cmake;${ANDROID_CMAKE}"
@@ -76,7 +93,7 @@ jobs:
             sdkmanager --list
           } 2>&1 | tee ci-logs/android-sdk.log
 
-          test -f "${ANDROID_SDK_ROOT}/platforms/android-${ANDROID_PLATFORM}/android.jar"
+          test -f "${ANDROID_SDK_ROOT}/platforms/${SPOTILOL_ANDROID_PLATFORM_DIR}/android.jar"
           test -x "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
           test -x "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/zipalign"
           test -x "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/apksigner"
