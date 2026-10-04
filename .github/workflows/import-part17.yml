@@ -37,6 +37,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          git fetch origin main
+          git checkout -B part17-import origin/main
           find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
           cp -a /tmp/spotilol-unpack/Spotilol-1.1.8/. .
           git config user.name "github-actions[bot]"
