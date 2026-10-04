@@ -11,6 +11,7 @@ permissions:
 
 env:
   ANDROID_PLATFORM: '37'
+  ANDROID_PLATFORM_PACKAGE: '37.0'
   ANDROID_BUILD_TOOLS: '36.0.0'
   ANDROID_NDK: '28.2.13676358'
   ANDROID_CMAKE: '3.22.1'
@@ -64,10 +65,15 @@ jobs:
             echo "ANDROID_HOME=${ANDROID_HOME:-}"
             echo "sdkmanager=$(command -v sdkmanager || true)"
             sdkmanager --version
+            platform_package="platforms;android-${ANDROID_PLATFORM_PACKAGE}"
+            platform_dir="android-${ANDROID_PLATFORM_PACKAGE}"
+            echo "Resolved Android platform package: ${platform_package}"
+            echo "Resolved Android platform directory: ${platform_dir}"
+
             yes | sdkmanager --licenses >/dev/null || true
             sdkmanager --install \
               "platform-tools" \
-              "platforms;android-${ANDROID_PLATFORM}" \
+              "${platform_package}" \
               "build-tools;${ANDROID_BUILD_TOOLS}" \
               "ndk;${ANDROID_NDK}" \
               "cmake;${ANDROID_CMAKE}"
@@ -76,7 +82,7 @@ jobs:
             sdkmanager --list
           } 2>&1 | tee ci-logs/android-sdk.log
 
-          test -f "${ANDROID_SDK_ROOT}/platforms/android-${ANDROID_PLATFORM}/android.jar"
+          test -f "${ANDROID_SDK_ROOT}/platforms/android-${ANDROID_PLATFORM_PACKAGE}/android.jar"
           test -x "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/aapt2"
           test -x "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/zipalign"
           test -x "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/apksigner"
