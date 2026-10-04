@@ -142,7 +142,7 @@ jobs:
           ./gradlew --no-daemon --stacktrace --warning-mode all --console=plain :app:analyzeReleaseR8Config \
             2>&1 | tee ci-logs/r8-config-analyzer.log
 
-      - name: Restore optional release signing key
+      - name: Configure release signing
         shell: bash
         env:
           KEYSTORE_B64: ${{ secrets.SPOTILOL_KEYSTORE_B64 }}
@@ -151,8 +151,8 @@ jobs:
           KEY_PASSWORD: ${{ secrets.SPOTILOL_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          mkdir -p keystore
           if [[ -n "${KEYSTORE_B64:-}" && -n "${STORE_PASSWORD:-}" && -n "${KEY_ALIAS:-}" && -n "${KEY_PASSWORD:-}" ]]; then
-            mkdir -p keystore
             printf '%s' "$KEYSTORE_B64" | base64 --decode > keystore/release.jks
             cat > keystore/keystore.properties <<EOF
           storeFile=release.jks
@@ -160,10 +160,30 @@ jobs:
           keyAlias=${KEY_ALIAS}
           keyPassword=${KEY_PASSWORD}
           EOF
-            echo "Release signing key configured."
+            echo "Release signing mode: production secret keystore"
           else
-            echo "No release signing secrets configured; release APK will remain unsigned."
+            ci_password="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+            keytool -genkeypair -noprompt \
+              -keystore keystore/release.jks \
+              -storetype JKS \
+              -storepass "$ci_password" \
+              -keypass "$ci_password" \
+              -alias spotilol-ci \
+              -keyalg RSA \
+              -keysize 4096 \
+              -validity 3650 \
+              -dname "CN=Spotilol CI Test, OU=CI, O=Spotilol, L=CI, ST=CI, C=SK"
+            cat > keystore/keystore.properties <<EOF
+          storeFile=release.jks
+          storePassword=${ci_password}
+          keyAlias=spotilol-ci
+          keyPassword=${ci_password}
+          EOF
+            echo "Release signing mode: ephemeral CI test key"
+            echo "WARNING: This certificate is intentionally regenerated per CI run and is not suitable for production upgrades."
           fi
+          test -s keystore/release.jks
+          test -s keystore/keystore.properties
 
       - name: Build debug APK
         id: build_debug
