@@ -125,11 +125,9 @@ dependencies {
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)
 
-    // Release hardening: the v1.0.1 graphics-path native binary bundled by the
-    // upstream 1.1.8 APK has a non-16-KiB-aligned RELRO segment. Keep this on
-    // the current stable AndroidX Graphics line without changing widget APIs.
-    implementation(libs.androidx.graphics.path)
-    implementation(libs.androidx.graphics.shapes)
+    // Keep transitive AndroidX DataStore on the current stable line. Older 1.1.x
+    // artifacts package libdatastore_shared_counter.so with non-16-KiB RELRO.
+    implementation(libs.androidx.datastore)
 
     // Ktor + serialization (YouTube InnerTube client)
     implementation(libs.ktor.client.core)
