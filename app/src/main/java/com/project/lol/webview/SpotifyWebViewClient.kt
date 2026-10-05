@@ -1,7 +1,9 @@
 package com.project.lol.webview
 
+import android.content.Intent
 import android.graphics.Bitmap
 import com.project.lol.util.Logger
+import com.project.lol.bridge.SpotifyBridge
 import android.webkit.CookieManager
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebResourceError
@@ -20,6 +22,7 @@ import java.net.URL
 import java.util.Locale
 
 class SpotifyWebViewClient(
+    private val bridge: SpotifyBridge,
     onLoginRequired: () -> Unit,
     onNavStateChanged: ((Boolean) -> Unit)? = null,
     onRenderProcessGone: (() -> Unit)? = null,
@@ -41,6 +44,44 @@ class SpotifyWebViewClient(
     private var docStartJs: String? = null
     private var docStartView: WebView? = null
     private var docStartJustRegistered = false
+    private var bridgeEnabled: Boolean? = null
+
+    fun syncBridgeForUrl(view: WebView, url: String?) {
+        val shouldEnable = TrustedOrigins.isBridgeOrigin(url)
+        if (bridgeEnabled == shouldEnable) return
+        if (shouldEnable) {
+            view.addJavascriptInterface(bridge, "AndBridge")
+            Logger.d(TAG, "native bridge enabled for trusted Spotify origin")
+        } else {
+            view.removeJavascriptInterface("AndBridge")
+            Logger.d(TAG, "native bridge disabled outside trusted Spotify origin")
+        }
+        bridgeEnabled = shouldEnable
+    }
+
+    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+        if (!request.isForMainFrame) return false
+        val target = request.url.toString()
+        if (TrustedOrigins.isAllowedMainFrame(target)) {
+            syncBridgeForUrl(view, target)
+            return false
+        }
+
+        syncBridgeForUrl(view, null)
+        Logger.w(TAG, "main-frame navigation moved outside trusted origins: $target")
+        val scheme = request.url.scheme?.lowercase(Locale.ROOT)
+        if (scheme == "http" || scheme == "https") {
+            runCatching {
+                val external = Intent(Intent.ACTION_VIEW, request.url).apply {
+                    addCategory(Intent.CATEGORY_BROWSABLE)
+                }
+                view.context.startActivity(external)
+            }.onFailure {
+                Logger.w(TAG, "could not open external navigation: ${it.message}")
+            }
+        }
+        return true
+    }
 
     override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
         super.doUpdateVisitedHistory(view, url, isReload)
@@ -57,13 +98,23 @@ class SpotifyWebViewClient(
         pageStartedAt = 0
         currentWebView = view
         registerPrefsListener(view)
+        syncBridgeForUrl(view, url)
         Logger.i(TAG, "page finished in ${elapsed}ms: $url")
+
+        if (!TrustedOrigins.isAllowedMainFrame(url)) {
+            Logger.w(TAG, "ignoring finished page outside trusted origins: $url")
+            return
+        }
 
         if (url.startsWith("https://www.facebook.com/privacy/consent/gdp/")) {
             Logger.s(TAG, "route: facebook gdpr bypass")
             onPageFinishedClean(view, FbGdprBypass.CONTENT)
             return
         }
+
+        // OAuth providers may stay inside the WebView, but they must never receive Spotify's
+        // privileged JS bridge or player-control injections.
+        if (!TrustedOrigins.isBridgeOrigin(url)) return
 
         if (url.endsWith("/login")) {
             Logger.s(TAG, "route: classic login button")
@@ -116,6 +167,13 @@ class SpotifyWebViewClient(
 
         AdIdStore.clear()
         if (view == null || prefs == null) return
+
+        syncBridgeForUrl(view, url)
+        if (!TrustedOrigins.isAllowedMainFrame(url)) {
+            Logger.w(TAG, "stopping untrusted main-frame load: $url")
+            view.stopLoading()
+            return
+        }
 
         // open.spotify.com: the payload is a document-start script (registered in
         // MainActivity before the first load), so it runs before Spotify's own scripts.
@@ -304,16 +362,8 @@ class SpotifyWebViewClient(
         return null
     }
 
-    private fun isGoogleAuthUrl(url: String?): Boolean {
-        if (url == null) return false
-        val host = runCatching { android.net.Uri.parse(url).host }.getOrNull()
-            ?.lowercase() ?: return false
-        return host == "google.com" ||
-            host.endsWith(".google.com") ||
-            host.contains(".google.") ||
-            host.endsWith(".youtube.com") ||
-            host == "youtube.com"
-    }
+    private fun isGoogleAuthUrl(url: String?): Boolean =
+        TrustedOrigins.isGoogleOrigin(url)
 
     private fun injectPlayerControl(view: WebView) {
         val prefs = view.context.getSharedPreferences("spotilol_prefs", 0)
