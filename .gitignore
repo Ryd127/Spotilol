@@ -24,6 +24,9 @@ app/google-services.json
 *.pem
 keystore/
 
+# Tool-generated metadata
+.devin/
+
 # OS files
 Thumbs.db
 Desktop.ini
