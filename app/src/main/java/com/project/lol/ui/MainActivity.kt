@@ -122,6 +122,7 @@ import com.project.lol.util.UpdateChecker
 import com.project.lol.webview.SpotifyWebChromeClient
 import com.project.lol.webview.SpotifyWebViewClient
 import com.project.lol.webview.SpotifyWebViewSession
+import com.project.lol.webview.TrustedOrigins
 import com.project.lol.webview.helpers.DevLogPrelude
 import com.project.lol.webview.helpers.LyricsTheme
 import com.project.lol.webview.helpers.buildAmoledJs
@@ -486,9 +487,9 @@ class MainActivity : ComponentActivity() {
                                             WebSettingsCompat.setBackForwardCacheEnabled(settings, true)
                                         }
 
-                                        addJavascriptInterface(bridge, "AndBridge")
                                         val chromeClient = SpotifyWebChromeClient()
                                         val spotifyClient = SpotifyWebViewClient(
+                                            bridge = bridge,
                                             onLoginRequired = {
                                                 webView?.loadUrl("https://accounts.spotify.com/login")
                                             }
@@ -517,6 +518,7 @@ class MainActivity : ComponentActivity() {
                                             ?: if (loggedIn) "https://open.spotify.com/"
                                             else "https://accounts.spotify.com/login"
                                         pendingLink = null
+                                        spotifyClient.syncBridgeForUrl(this, target)
                                         Logger.i(
                                             TAG,
                                             "webview ready: js=on dom=on multiWindow=on bfcache=" +
@@ -643,10 +645,9 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun extractSpotifyLink(intent: Intent?): String? {
-        val uri = intent?.data ?: return null
-        val host = uri.host ?: return null
-        val accepted = host == "spotify.link" || host.endsWith("spotify.com")
-        return if (accepted) uri.toString() else null
+        if (intent?.action != Intent.ACTION_VIEW) return null
+        val url = intent.dataString ?: return null
+        return url.takeIf(TrustedOrigins::isSpotifyDeepLink)
     }
 
     private fun setServiceEnabled(newValue: Boolean) {
@@ -1550,6 +1551,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun navigateSpotifyLink(link: String) {
+        if (!TrustedOrigins.isSpotifyDeepLink(link)) {
+            Logger.w(TAG, "blocked untrusted spotify navigation: $link")
+            return
+        }
         Logger.i(TAG, "navigate to spotify link: $link")
         val wv = webView ?: run {
             pendingLink = link
