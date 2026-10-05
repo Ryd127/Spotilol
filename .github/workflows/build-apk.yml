@@ -220,11 +220,18 @@ jobs:
           set -euo pipefail
           mkdir -p ci-logs
           shopt -s nullglob
-          apks=(app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk)
-          if (( ${#apks[@]} == 0 )); then
-            echo "No APKs produced" | tee ci-logs/apk-verification.log >&2
+          debug_apks=(app/build/outputs/apk/debug/*.apk)
+          release_apks=(app/build/outputs/apk/release/*.apk)
+          apks=("${debug_apks[@]}" "${release_apks[@]}")
+          if (( ${#debug_apks[@]} != 1 || ${#release_apks[@]} != 1 )); then
+            echo "Expected exactly one debug and one release APK; found debug=${#debug_apks[@]} release=${#release_apks[@]}" \
+              | tee ci-logs/apk-verification.log >&2
             exit 1
           fi
+
+          expected_version_name="$(apkanalyzer manifest version-name "${release_apks[0]}" | tr -d '\r\n')"
+          expected_version_code="$(apkanalyzer manifest version-code "${release_apks[0]}" | tr -d '\r\n')"
+          echo "Expected version from release APK: ${expected_version_name}(${expected_version_code})"
 
           : > SHA256SUMS.txt
           : > ci-logs/apk-verification.log
@@ -241,8 +248,8 @@ jobs:
               debuggable="$(apkanalyzer manifest debuggable "$apk" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
               echo "APK identity: id=${app_id} version=${version_name}(${version_code}) minSdk=${min_sdk} targetSdk=${target_sdk} debuggable=${debuggable}"
               [[ "$app_id" == "com.project.lol" ]]
-              [[ "$version_name" == "1.1.8" ]]
-              [[ "$version_code" == "18" ]]
+              [[ "$version_name" == "$expected_version_name" ]]
+              [[ "$version_code" == "$expected_version_code" ]]
               [[ "$min_sdk" == "28" ]]
               [[ "$target_sdk" == "36" ]]
               if [[ "$apk" == *"/debug/"* ]]; then
