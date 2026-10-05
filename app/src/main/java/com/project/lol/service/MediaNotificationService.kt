@@ -119,6 +119,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         private const val PLAYBACK_LOCK_GUARD_MS = 30_000L
         private const val PLAYBACK_WAKE_LOCK_TIMEOUT_MS = 120_000L
         private const val PLAYBACK_COMMAND_LOCK_TIMEOUT_MS = 15_000L
+        private const val ORIGIN_ISLAND_PROGRESS_REFRESH_MS = 1_000L
 
         var webView: WebView? = null
         var instance: MediaNotificationService? = null
@@ -270,6 +271,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     }
     private val widgetScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var lastWidgetPushAt = 0L
+    private var lastOriginIslandRefreshAt = 0L
 
     private val actionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -673,6 +675,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             try { mediaSession.release() } catch (_: Exception) {}
         }
         try {
+            VivoOriginIsland.cancel(this)
             stopForeground(STOP_FOREGROUND_REMOVE)
             getSystemService(NotificationManager::class.java)
                 .cancel(NOTIFICATION_ID)
@@ -976,6 +979,13 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         }
         currentPosition = position
         updatePlaybackState()
+        if (VivoOriginIsland.isSupportedDevice()) {
+            val now = System.currentTimeMillis()
+            if (now - lastOriginIslandRefreshAt >= ORIGIN_ISLAND_PROGRESS_REFRESH_MS) {
+                lastOriginIslandRefreshAt = now
+                showNotification()
+            }
+        }
         pushWidgetState()
     }
 
@@ -1108,6 +1118,14 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     private fun showNotification() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(NOTIFICATION_ID, buildNotificationSafe())
+        VivoOriginIsland.post(
+            context = this,
+            title = currentTitle,
+            artist = currentArtist,
+            positionMs = currentPosition,
+            durationMs = currentDuration,
+            accentColor = accent(),
+        )
     }
 
     private fun buildNotificationSafe(): Notification {
@@ -1197,6 +1215,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             .setOngoing(true)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setShowWhen(false)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setColor(accent())
             .setStyle(buildMediaStyle(isShuffleAvailable))
@@ -1365,6 +1385,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             try { mediaSession.isActive = false } catch (_: Exception) {}
         }
         try {
+            VivoOriginIsland.cancel(this)
             getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
         } catch (_: Exception) {}
         try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
@@ -1381,6 +1402,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             }
             releasePlaybackLocksNow()
             try {
+                VivoOriginIsland.cancel(this)
                 getSystemService(NotificationManager::class.java)
                     .cancel(NOTIFICATION_ID)
             } catch (_: Exception) {}
