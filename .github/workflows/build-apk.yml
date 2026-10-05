@@ -481,24 +481,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          release_notes="$(mktemp)"
-          cat > "$release_notes" <<EOF
-          Spotilol ${VERSION_NAME}
-
-          Production-signed Android release.
-
-          Verification:
-          - package: com.project.lol
-          - certificate SHA-256: ${SPOTILOL_PRODUCTION_CERT_SHA256}
-          - 16 KiB ELF layout: verified
-          - zipalign -P 16: verified
-          - APK signature: verified
-
-          See RELEASE_INFO.txt and SHA256SUMS.txt attached to this release for exact build metadata.
-          EOF
-
           if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
-            echo "Release ${GITHUB_REF_NAME} already exists; replacing release assets."
+            echo "Release ${GITHUB_REF_NAME} already exists; clearing description and replacing release assets."
+            gh release edit "${GITHUB_REF_NAME}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --title "Spotilol ${VERSION_NAME}" \
+              --notes ""
             gh release upload "${GITHUB_REF_NAME}" \
               "${PRODUCTION_APK}" \
               release-package/SHA256SUMS.txt \
@@ -513,7 +501,7 @@ jobs:
               --repo "${GITHUB_REPOSITORY}" \
               --verify-tag \
               --title "Spotilol ${VERSION_NAME}" \
-              --notes-file "$release_notes"
+              --notes ""
           fi
 
           gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}"
