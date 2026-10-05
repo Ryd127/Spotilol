@@ -41,8 +41,8 @@ android {
         applicationId = "com.spotify.music"
         minSdk = 28
         targetSdk = 36
-        versionCode = 24
-        versionName = "1.1.10-island6"
+        versionCode = 25
+        versionName = "1.1.10-island7"
         buildConfigField("boolean", "FIREBASE_ENABLED", firebaseConfigPresent.toString())
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
