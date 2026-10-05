@@ -64,26 +64,14 @@ class SpotifyWebChromeClient(
         return true
     }
 
-    private fun isSpotifyUrl(url: String): Boolean {
-        return url.startsWith("https://open.spotify.com/") ||
-                url.startsWith("https://accounts.spotify.com/")
-    }
+    private fun isSpotifyUrl(url: String): Boolean =
+        TrustedOrigins.isSpotifyWebUrl(url)
 
-    private fun isOAuthUrl(url: String): Boolean {
-        val host = runCatching { url.toUri().host?.lowercase() }.getOrNull() ?: return false
-        return host == "google.com" ||
-                host.endsWith(".google.com") ||
-                host.indexOf(".google.") != -1 ||
-                host == "facebook.com" ||
-                host.endsWith(".facebook.com") ||
-                host == "appleid.apple.com" ||
-                host.endsWith(".apple.com")
-    }
+    private fun isOAuthUrl(url: String): Boolean =
+        TrustedOrigins.isOAuthOrigin(url)
 
-    private fun isGoogleUrl(url: String): Boolean {
-        val host = runCatching { url.toUri().host?.lowercase() }.getOrNull() ?: return false
-        return host == "google.com" || host.endsWith(".google.com") || host.indexOf(".google.") != -1
-    }
+    private fun isGoogleUrl(url: String): Boolean =
+        TrustedOrigins.isGoogleOrigin(url)
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateWindow(
@@ -159,7 +147,13 @@ class SpotifyWebChromeClient(
         permissionRequest ?: return
         Handler(Looper.getMainLooper()).post {
             val resources = permissionRequest.resources
-            Logger.d(TAG, "permission request: ${permissionRequest.origin} ${resources.joinToString(",")}")
+            val origin = permissionRequest.origin?.toString()
+            Logger.d(TAG, "permission request: $origin ${resources.joinToString(",")}")
+            if (!TrustedOrigins.isBridgeOrigin(origin)) {
+                permissionRequest.deny()
+                Logger.w(TAG, "permission denied for untrusted origin: $origin")
+                return@post
+            }
             if (resources.contains(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID)) {
                 permissionRequest.grant(resources)
                 Logger.i(TAG, "protected media granted")
