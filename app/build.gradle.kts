@@ -167,4 +167,6 @@ dependencies {
 
     // Core library desugaring (required by NewPipeExtractor)
     coreLibraryDesugaring(libs.desugaring)
+
+    testImplementation("junit:junit:4.13.2")
 }
