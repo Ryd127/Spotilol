@@ -120,6 +120,9 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         private const val PLAYBACK_WAKE_LOCK_TIMEOUT_MS = 120_000L
         private const val PLAYBACK_COMMAND_LOCK_TIMEOUT_MS = 15_000L
         private const val COVER_TRANSITION_GRACE_MS = 1_200L
+        private const val COVER_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
 
         var webView: WebView? = null
         var instance: MediaNotificationService? = null
@@ -1098,6 +1101,13 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
             .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, currentAlbum)
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, currentDuration)
+
+        lastCoverUrl.takeIf { it.startsWith("https://") }?.let { artUri ->
+            builder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI, artUri)
+            builder.putString(MediaMetadataCompat.METADATA_KEY_ART_URI, artUri)
+            builder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON_URI, artUri)
+        }
+
         coverBitmap?.let { bmp ->
             builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bmp)
             builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, bmp)
@@ -1113,9 +1123,18 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             var conn: HttpURLConnection? = null
             try {
                 conn = URL(url).openConnection() as HttpURLConnection
+                conn.instanceFollowRedirects = true
                 conn.connectTimeout = 5000
                 conn.readTimeout = 5000
+                conn.setRequestProperty("User-Agent", COVER_USER_AGENT)
+                conn.setRequestProperty("Referer", "https://open.spotify.com/")
+                conn.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
                 conn.connect()
+                val code = conn.responseCode
+                if (code !in 200..299) {
+                    throw IllegalStateException("Cover HTTP $code")
+                }
                 val raw = conn.inputStream.use { BitmapFactory.decodeStream(it) }
                     ?: throw IllegalStateException("Cover decode returned null")
                 val target = 512
