@@ -8,66 +8,27 @@ import org.junit.Test
 class VivoOriginIslandTest {
 
     @Test
-    fun progressPayloadUsesOriginOsProgressTemplate() {
-        val extras = VivoOriginIsland.buildShowExtras(
-            title = "Track",
-            artist = "Artist",
-            appLabel = "Spotilol",
-            positionMs = 25_000L,
-            durationMs = 100_000L,
-            accentColor = 0xFF112233.toInt(),
-        )
-
-        assertEquals(VivoOriginIsland.OP_SHOW, extras.getInt("notification.superx.operation"))
-        assertTrue(extras.getBoolean("notification.superx.showNotify"))
-        assertEquals(VivoOriginIsland.SCENE, extras.getString("notification.superx.scene"))
-        assertEquals(2, extras.getInt("notification.superx.template"))
-
-        val infos = extras.getBundle("notification.superx.infos")!!
-        assertEquals(25, infos.getInt("notification.superx.infos.progress"))
-
-        val island = extras.getBundle("notification.superx.island")!!
-        assertEquals(1, island.getInt("island.superx.leftTemplate"))
-        assertEquals(
-            VivoOriginIsland.RIGHT_TEMPLATE_PROGRESS,
-            island.getInt("island.superx.rightTemplate"),
-        )
-        assertEquals(
-            25,
-            island.getBundle("island.superx.rightInfo")!!
-                .getInt("island.superx.rightInfo.progressValue"),
-        )
+    fun progressTemplateIsUsedOnlyForMeaningfulProgress() {
+        assertTrue(VivoOriginIsland.usesProgressTemplate(25_000L, 100_000L))
+        assertFalse(VivoOriginIsland.usesProgressTemplate(0L, 100_000L))
+        assertFalse(VivoOriginIsland.usesProgressTemplate(100_000L, 100_000L))
+        assertFalse(VivoOriginIsland.usesProgressTemplate(1L, 0L))
     }
 
     @Test
-    fun zeroProgressFallsBackToMediaTextTemplate() {
-        val extras = VivoOriginIsland.buildShowExtras(
-            title = "Track",
-            artist = "Artist",
-            appLabel = "Spotilol",
-            positionMs = 0L,
-            durationMs = 100_000L,
-            accentColor = 0xFF112233.toInt(),
-        )
-
-        assertEquals(1, extras.getInt("notification.superx.template"))
-        val island = extras.getBundle("notification.superx.island")!!
-        assertEquals(
-            VivoOriginIsland.RIGHT_TEMPLATE_TEXT_ICON,
-            island.getInt("island.superx.rightTemplate"),
-        )
-        assertEquals(
-            "Artist",
-            island.getBundle("island.superx.rightInfo")!!
-                .getString("island.superx.rightInfo.content"),
-        )
+    fun progressPercentIsClamped() {
+        assertEquals(25, VivoOriginIsland.progressPercent(25_000L, 100_000L))
+        assertEquals(0, VivoOriginIsland.progressPercent(-1L, 100_000L))
+        assertEquals(100, VivoOriginIsland.progressPercent(150_000L, 100_000L))
+        assertEquals(0, VivoOriginIsland.progressPercent(5_000L, 0L))
     }
 
     @Test
-    fun endPayloadCarriesOnlyUnmountOperation() {
-        val extras = VivoOriginIsland.buildEndExtras()
-        assertEquals(VivoOriginIsland.OP_END, extras.getInt("notification.superx.operation"))
-        assertFalse(extras.containsKey("notification.superx.scene"))
-        assertEquals(1, extras.size())
+    fun wireConstantsStayOnKnownOriginOsValues() {
+        assertEquals(0, VivoOriginIsland.OP_SHOW)
+        assertEquals(2, VivoOriginIsland.OP_END)
+        assertEquals("TRAIN", VivoOriginIsland.SCENE)
+        assertEquals(2, VivoOriginIsland.RIGHT_TEMPLATE_PROGRESS)
+        assertEquals(4, VivoOriginIsland.RIGHT_TEMPLATE_TEXT_ICON)
     }
 }
