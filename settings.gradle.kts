@@ -27,3 +27,4 @@ rootProject.name = "Spotilol"
 include(":app")
 include(":lame")
 include(":opus")
+include(":islandbridge")
