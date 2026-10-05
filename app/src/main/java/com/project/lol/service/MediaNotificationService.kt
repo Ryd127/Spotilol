@@ -121,6 +121,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         private const val PLAYBACK_COMMAND_LOCK_TIMEOUT_MS = 15_000L
         private const val COVER_TRANSITION_GRACE_MS = 1_200L
         private const val MEDIA_SESSION_ART_MAX_PX = 256
+        private const val MEDIA_SESSION_DISPLAY_ICON_MAX_PX = 128
         private const val ART_TAG = "media.art"
         private const val COVER_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 " +
@@ -1141,17 +1142,15 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, currentAlbum)
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, currentDuration)
 
-        if (currentArt != null) {
-            lastCoverUrl.takeIf { it.startsWith("https://") }?.let { artUri ->
-                builder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI, artUri)
-                builder.putString(MediaMetadataCompat.METADATA_KEY_ART_URI, artUri)
-                builder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON_URI, artUri)
-            }
-        }
+        // Do not expose remote https artwork URIs to MediaSession. Some OEM consumers prefer
+        // DISPLAY_ICON/URI over ART/ALBUM_ART and expect a ContentResolver-readable URI.
+        // Give Vivo an explicit small bitmap in the highest-priority display-art key instead.
+        val displayIcon = currentArt?.let { bitmapForMaxSide(it, MEDIA_SESSION_DISPLAY_ICON_MAX_PX) }
+        displayIcon?.let { builder.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, it) }
 
         // Keep the full-size bitmap for NotificationCompat.setLargeIcon(), but use a bounded copy
         // for MediaSession metadata so OEM media renderers stay under Binder transaction limits.
-        val sessionArt = currentArt?.let { bitmapForMediaSession(it) }
+        val sessionArt = currentArt?.let { bitmapForMaxSide(it, MEDIA_SESSION_ART_MAX_PX) }
         sessionArt?.let { bmp ->
             builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bmp)
             builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, bmp)
@@ -1161,11 +1160,17 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             try {
                 val metadata = builder.build()
                 mediaSession.setMetadata(metadata)
-                val echoed = mediaSession.controller.metadata
+                val echoedMetadata = mediaSession.controller.metadata
+                val echoed = echoedMetadata
                     ?.getBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART)
+                val echoedDisplay = echoedMetadata
+                    ?.getBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON)
+                val description = echoedMetadata?.description
+                val descriptionIcon = description?.iconBitmap
+                val descriptionIconUri = description?.iconUri
                 Logger.i(
                     ART_TAG,
-                    "MediaSession metadata set art=${sessionArt?.let { "${it.width}x${it.height}" } ?: "none"} echoed=${echoed?.let { "${it.width}x${it.height}" } ?: "none"} uri=${lastCoverUrl.take(100)}"
+                    "MediaSession metadata set art=${sessionArt?.let { "${it.width}x${it.height}" } ?: "none"} display=${displayIcon?.let { "${it.width}x${it.height}" } ?: "none"} echoedArt=${echoed?.let { "${it.width}x${it.height}" } ?: "none"} echoedDisplay=${echoedDisplay?.let { "${it.width}x${it.height}" } ?: "none"} descIcon=${descriptionIcon?.let { "${it.width}x${it.height}" } ?: "none"} descUri=${descriptionIconUri ?: "none"} remoteUriKeys=off"
                 )
             } catch (e: Exception) {
                 Logger.e(ART_TAG, "MediaSession setMetadata failed: ${e.javaClass.simpleName}: ${e.message}", e)
@@ -1173,10 +1178,10 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         }
     }
 
-    private fun bitmapForMediaSession(source: Bitmap): Bitmap {
+    private fun bitmapForMaxSide(source: Bitmap, maxPx: Int): Bitmap {
         val maxSide = maxOf(source.width, source.height)
-        if (maxSide <= MEDIA_SESSION_ART_MAX_PX) return source
-        val scale = MEDIA_SESSION_ART_MAX_PX.toFloat() / maxSide.toFloat()
+        if (maxSide <= maxPx) return source
+        val scale = maxPx.toFloat() / maxSide.toFloat()
         val width = (source.width * scale).toInt().coerceAtLeast(1)
         val height = (source.height * scale).toInt().coerceAtLeast(1)
         return Bitmap.createScaledBitmap(source, width, height, true)
