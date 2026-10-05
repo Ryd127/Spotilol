@@ -145,10 +145,8 @@ import com.project.lol.ui.components.mapWebViewError
 import com.project.lol.webview.helpers.AccentTheme
 import java.util.Locale
 
-@OptIn(
-    ExperimentalMaterial3Api::class,
-    WebSettingsCompat.ExperimentalBackForwardCache::class
-)
+@OptIn(ExperimentalMaterial3Api::class)
+@androidx.annotation.OptIn(markerClass = [WebSettingsCompat.ExperimentalBackForwardCache::class])
 class MainActivity : ComponentActivity() {
 
     companion object {
