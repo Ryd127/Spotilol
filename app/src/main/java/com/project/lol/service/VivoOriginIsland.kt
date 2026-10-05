@@ -88,6 +88,18 @@ object VivoOriginIsland {
         }
     }
 
+    internal fun usesProgressTemplate(positionMs: Long, durationMs: Long): Boolean {
+        val safeDuration = durationMs.coerceAtLeast(0L)
+        val safePosition = positionMs.coerceIn(0L, if (safeDuration > 0L) safeDuration else Long.MAX_VALUE)
+        return safeDuration > 0L && safePosition in 1 until safeDuration
+    }
+
+    internal fun progressPercent(positionMs: Long, durationMs: Long): Int {
+        if (durationMs <= 0L) return 0
+        val safePosition = positionMs.coerceIn(0L, durationMs)
+        return ((safePosition * 100L) / durationMs).toInt().coerceIn(0, 100)
+    }
+
     internal fun buildShowExtras(
         title: String,
         artist: String,
@@ -97,14 +109,8 @@ object VivoOriginIsland {
         accentColor: Int,
         icon: Icon? = null,
     ): Bundle {
-        val safeDuration = durationMs.coerceAtLeast(0L)
-        val safePosition = positionMs.coerceIn(0L, if (safeDuration > 0L) safeDuration else Long.MAX_VALUE)
-        val hasProgress = safeDuration > 0L && safePosition in 1 until safeDuration
-        val progressPercent = if (safeDuration > 0L) {
-            ((safePosition * 100L) / safeDuration).toInt().coerceIn(0, 100)
-        } else {
-            0
-        }
+        val hasProgress = usesProgressTemplate(positionMs, durationMs)
+        val progressPercent = progressPercent(positionMs, durationMs)
 
         val extras = Bundle().apply {
             putInt("notification.superx.operation", OP_SHOW)
