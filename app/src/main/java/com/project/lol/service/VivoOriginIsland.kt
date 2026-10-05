@@ -1,7 +1,11 @@
 package com.project.lol.service
 
+import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.Bundle
@@ -17,9 +21,15 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Origin Island is not part of the public Android SDK. The wire keys used here are based on the
  * publicly reverse-engineered notification.superx.* protocol documented by OriginOS Toolkit /
  * CunnyPlayground. Unsupported ROMs simply ignore these extras.
+ *
+ * Important: the island payload is posted as its own ordinary notification, separate from
+ * Spotilol's MediaStyle foreground notification. This mirrors the known working reference caster.
  */
 object VivoOriginIsland {
     private const val TAG = "VivoOriginIsland"
+
+    internal const val CHANNEL_ID = "spotilol_origin_island"
+    internal const val NOTIFICATION_ID = 3001
 
     internal const val OP_SHOW = 0
     internal const val OP_END = 2
@@ -38,9 +48,8 @@ object VivoOriginIsland {
             manufacturer.contains("iqoo", ignoreCase = true)
     }
 
-    fun applyTo(
+    fun post(
         context: Context,
-        builder: NotificationCompat.Builder,
         title: String,
         artist: String,
         positionMs: Long,
@@ -49,43 +58,84 @@ object VivoOriginIsland {
     ) {
         if (!isSupportedDevice()) return
 
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        ensureChannel(context, manager)
         registerSceneOnce(context)
 
-        val icon = runCatching {
-            Icon.createWithResource(context, R.mipmap.ic_launcher)
-        }.getOrNull()
+        // A single self-contained Icon instance is deliberately reused in every nested bundle.
+        // This matches the known working OriginOS caster path more closely than resource Icons.
+        val sourceIcon = createLauncherIcon(context)
 
-        builder.addExtras(
-            buildShowExtras(
-                title = title.ifBlank { context.getString(R.string.app_name) },
-                artist = artist,
-                appLabel = context.getString(R.string.app_name),
-                positionMs = positionMs,
-                durationMs = durationMs,
-                accentColor = accentColor,
-                icon = icon,
+        val launchIntent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+        val contentIntent = launchIntent?.let {
+            PendingIntent.getActivity(
+                context,
+                NOTIFICATION_ID,
+                it,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
+        }
+
+        val safeTitle = title.ifBlank { context.getString(R.string.app_name) }
+        val extras = buildShowExtras(
+            title = safeTitle,
+            artist = artist,
+            appLabel = context.getString(R.string.app_name),
+            positionMs = positionMs,
+            durationMs = durationMs,
+            accentColor = accentColor,
+            icon = sourceIcon,
         )
+
+        val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(safeTitle)
+            .setContentText(artist)
+            .setSubText(context.getString(R.string.app_name))
+            .setOngoing(true)
+            .setSilent(true)
+            .setOnlyAlertOnce(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setCategory(NotificationCompat.CATEGORY_TRANSPORT)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setColor(accentColor)
+            .addExtras(extras)
+
+        contentIntent?.let { builder.setContentIntent(it) }
+
+        if (usesProgressTemplate(positionMs, durationMs)) {
+            builder.setProgress(100, progressPercent(positionMs, durationMs), false)
+        }
+
+        runCatching {
+            manager.notify(NOTIFICATION_ID, builder.build())
+        }.onFailure {
+            Logger.w(TAG, "Origin Island notification post failed: ${it.message}")
+        }
     }
 
     /**
-     * Send OriginOS the graceful-unmount operation before the normal Android notification cancel.
-     * The caller still owns the final cancel/stopForeground.
+     * Unmount the OriginOS pill first, then remove only the dedicated island notification.
+     * Spotilol's normal MediaStyle notification is managed separately by the media service.
      */
-    fun unmount(context: Context, notificationId: Int, channelId: String) {
+    fun cancel(context: Context) {
         if (!isSupportedDevice()) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        ensureChannel(context, manager)
+
         runCatching {
-            val end = NotificationCompat.Builder(context, channelId)
+            val end = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.drawable.ic_notification)
                 .setSilent(true)
                 .setOnlyAlertOnce(true)
                 .addExtras(buildEndExtras())
                 .build()
-            manager.notify(notificationId, end)
+            manager.notify(NOTIFICATION_ID, end)
         }.onFailure {
             Logger.d(TAG, "Origin Island unmount hint failed: ${it.message}")
         }
+
+        manager.cancel(NOTIFICATION_ID)
     }
 
     internal fun usesProgressTemplate(positionMs: Long, durationMs: Long): Boolean {
@@ -201,6 +251,30 @@ object VivoOriginIsland {
         putInt("notification.superx.operation", OP_END)
     }
 
+    private fun ensureChannel(context: Context, manager: NotificationManager) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "Spotilol Origin Island",
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = "Provides playback information to vivo Origin Island."
+            setSound(null, null)
+            enableVibration(false)
+            setShowBadge(false)
+        }
+        manager.createNotificationChannel(channel)
+    }
+
+    private fun createLauncherIcon(context: Context): Icon? = runCatching {
+        val drawable = context.packageManager.getApplicationIcon(context.packageName)
+        val bitmap = Bitmap.createBitmap(96, 96, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawable.setBounds(0, 0, 96, 96)
+        drawable.draw(canvas)
+        Icon.createWithBitmap(bitmap)
+    }.getOrNull()
+
     private fun registerSceneOnce(context: Context) {
         if (!sceneRegistrationAttempted.compareAndSet(false, true)) return
 
@@ -222,7 +296,7 @@ object VivoOriginIsland {
             )
             Logger.i(TAG, "Origin Island scene registration requested")
         }.onFailure {
-            // Expected on non-vivo ROMs and on builds where the hidden method is inaccessible.
+            // Hidden API access is ROM-dependent. The notification payload itself remains safe.
             Logger.d(TAG, "Origin Island scene registration unavailable: ${it.javaClass.simpleName}")
         }
     }
