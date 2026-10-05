@@ -268,7 +268,7 @@ jobs:
               target_sdk="$(apkanalyzer manifest target-sdk "$apk" | tr -d '\r\n')"
               debuggable="$(apkanalyzer manifest debuggable "$apk" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
               echo "APK identity: id=${app_id} version=${version_name}(${version_code}) minSdk=${min_sdk} targetSdk=${target_sdk} debuggable=${debuggable}"
-              [[ "$app_id" == "com.project.lol" ]]
+              [[ "$app_id" == "com.spotify.music" ]]
               [[ "$version_name" == "$expected_version_name" ]]
               [[ "$version_code" == "$expected_version_code" ]]
               [[ "$min_sdk" == "28" ]]

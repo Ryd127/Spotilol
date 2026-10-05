@@ -38,11 +38,11 @@ android {
     ndkVersion = "28.2.13676358"
 
     defaultConfig {
-        applicationId = "com.project.lol"
+        applicationId = "com.spotify.music"
         minSdk = 28
         targetSdk = 36
-        versionCode = 19
-        versionName = "1.1.9"
+        versionCode = 22
+        versionName = "1.1.10-island4"
         buildConfigField("boolean", "FIREBASE_ENABLED", firebaseConfigPresent.toString())
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
