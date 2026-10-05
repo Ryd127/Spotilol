@@ -4,6 +4,7 @@ on:
   workflow_dispatch:
   push:
     branches: [ main, master ]
+    tags: [ 'v*' ]
   pull_request:
 
 permissions:
@@ -404,3 +405,115 @@ jobs:
             echo "Spotilol build/verification/release packaging failed. Download the diagnostics artifact for full logs." >&2
             exit 1
           fi
+
+
+  publish_release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      SPOTILOL_PRODUCTION_CERT_SHA256: 'a5757d4bca7f0939accc83d8e9b73017b18c6af45ae5f8eba694249f80eba985'
+
+    steps:
+      - name: Download verified release package
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact_name="Spotilol-release-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p release-package
+          gh run download "${GITHUB_RUN_ID}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --name "${artifact_name}" \
+            --dir release-package
+          find release-package -maxdepth 2 -type f -print
+
+      - name: Validate tag and production release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+
+          info="release-package/RELEASE_INFO.txt"
+          sums="release-package/SHA256SUMS.txt"
+          apks=(release-package/Spotilol-*-production.apk)
+
+          test -f "$info"
+          test -f "$sums"
+          if (( ${#apks[@]} != 1 )); then
+            echo "Expected exactly one production APK, found ${#apks[@]}" >&2
+            exit 1
+          fi
+
+          version_name="$(awk -F': ' '/^Version name:/ {print $2; exit}' "$info")"
+          version_code="$(awk -F': ' '/^Version code:/ {print $2; exit}' "$info")"
+          signing_mode="$(awk -F': ' '/^Signing mode:/ {print $2; exit}' "$info")"
+          cert_sha="$(awk -F': ' '/^Certificate SHA-256:/ {print tolower($2); exit}' "$info")"
+          apk_name="$(awk -F': ' '/^APK filename:/ {print $2; exit}' "$info")"
+          expected_tag="v${version_name}"
+
+          echo "Git tag:              ${GITHUB_REF_NAME}"
+          echo "Release version:      ${version_name}(${version_code})"
+          echo "Signing mode:         ${signing_mode}"
+          echo "Certificate SHA-256:  ${cert_sha}"
+          echo "APK:                  ${apk_name}"
+
+          [[ "${GITHUB_REF_NAME}" == "${expected_tag}" ]]
+          [[ "${signing_mode}" == "production" ]]
+          [[ "${cert_sha}" == "${SPOTILOL_PRODUCTION_CERT_SHA256}" ]]
+          [[ "${apk_name}" == "$(basename "${apks[0]}")" ]]
+
+          (
+            cd release-package
+            sha256sum -c SHA256SUMS.txt
+          )
+
+          echo "VERSION_NAME=${version_name}" >> "$GITHUB_ENV"
+          echo "PRODUCTION_APK=${apks[0]}" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub Release
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_notes="$(mktemp)"
+          cat > "$release_notes" <<EOF
+          Spotilol ${VERSION_NAME}
+
+          Production-signed Android release.
+
+          Verification:
+          - package: com.project.lol
+          - certificate SHA-256: ${SPOTILOL_PRODUCTION_CERT_SHA256}
+          - 16 KiB ELF layout: verified
+          - zipalign -P 16: verified
+          - APK signature: verified
+
+          See RELEASE_INFO.txt and SHA256SUMS.txt attached to this release for exact build metadata.
+          EOF
+
+          if gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; replacing release assets."
+            gh release upload "${GITHUB_REF_NAME}" \
+              "${PRODUCTION_APK}" \
+              release-package/SHA256SUMS.txt \
+              release-package/RELEASE_INFO.txt \
+              --repo "${GITHUB_REPOSITORY}" \
+              --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              "${PRODUCTION_APK}" \
+              release-package/SHA256SUMS.txt \
+              release-package/RELEASE_INFO.txt \
+              --repo "${GITHUB_REPOSITORY}" \
+              --verify-tag \
+              --title "Spotilol ${VERSION_NAME}" \
+              --notes-file "$release_notes"
+          fi
+
+          gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}"
