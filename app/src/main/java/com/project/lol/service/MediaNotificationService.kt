@@ -1116,7 +1116,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                 conn.connectTimeout = 5000
                 conn.readTimeout = 5000
                 conn.connect()
-                val raw = conn.inputStream.use { BitmapFactory.decodeStream(it) } ?: return@Thread
+                val raw = conn.inputStream.use { BitmapFactory.decodeStream(it) }
+                    ?: throw IllegalStateException("Cover decode returned null")
                 val target = 512
                 val scale = min(target.toFloat() / raw.width, target.toFloat() / raw.height)
                 val w = (raw.width * scale).toInt().coerceAtLeast(1)
