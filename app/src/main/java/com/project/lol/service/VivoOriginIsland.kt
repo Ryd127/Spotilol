@@ -57,6 +57,10 @@ object VivoOriginIsland {
         accentColor: Int,
     ) {
         if (!isSupportedDevice()) return
+        if (title.isBlank() && artist.isBlank()) {
+            cancel(context)
+            return
+        }
 
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         ensureChannel(context, manager)
