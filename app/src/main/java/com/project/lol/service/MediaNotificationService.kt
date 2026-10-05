@@ -717,7 +717,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
 
     @Suppress("DEPRECATION")
     private fun setupMediaSession() {
-        mediaSession = MediaSessionCompat(this, "SpotilolSession").apply {
+        mediaSession = MediaSessionCompat(this, "Spotify").apply {
             setFlags(
                 MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
                 MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
@@ -1346,7 +1346,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(currentTitle.ifEmpty { getString(R.string.app_name) })
             .setContentText(currentArtist)
-            .setSubText(getString(R.string.app_name))
+            .setSubText("Spotify")
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(contentIntent)
             .setOngoing(true)
