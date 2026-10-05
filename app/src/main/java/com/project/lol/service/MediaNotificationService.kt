@@ -120,6 +120,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         private const val PLAYBACK_WAKE_LOCK_TIMEOUT_MS = 120_000L
         private const val PLAYBACK_COMMAND_LOCK_TIMEOUT_MS = 15_000L
         private const val COVER_TRANSITION_GRACE_MS = 1_200L
+        private const val MEDIA_SESSION_ART_MAX_PX = 256
+        private const val ART_TAG = "media.art"
         private const val COVER_USER_AGENT =
             "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 " +
                 "(KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
@@ -952,6 +954,10 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             val coverUrl = obj.optString("cover", "")
             val coverTrackKey = currentCoverTrackKey()
             val hasCoverUrl = coverUrl.isNotEmpty() && coverUrl != "null"
+            Logger.i(
+                ART_TAG,
+                "status track=${currentTitle.take(48)} cover=${if (hasCoverUrl) coverUrl.take(140) else "<empty>"} bitmap=${coverBitmap?.let { "${it.width}x${it.height}" } ?: "none"}"
+            )
 
             if (hasCoverUrl) {
                 if (coverUrl == lastCoverUrl && coverBitmap != null) {
@@ -1004,7 +1010,9 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             updateMetadata()
             showNotification()
             pushWidgetState(force = true)
-        } catch (_: Exception) {}
+        } catch (e: Exception) {
+            Logger.e(ART_TAG, "media status apply failed: ${e.message}", e)
+        }
     }
 
     fun updatePlaybackPosition(position: Long) {
@@ -1108,14 +1116,37 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             builder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON_URI, artUri)
         }
 
-        coverBitmap?.let { bmp ->
+        // Keep the full-size bitmap for NotificationCompat.setLargeIcon(), but use a bounded copy
+        // for MediaSession metadata so OEM media renderers stay under Binder transaction limits.
+        val sessionArt = coverBitmap?.let { bitmapForMediaSession(it) }
+        sessionArt?.let { bmp ->
             builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bmp)
             builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, bmp)
-            builder.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, bmp)
         }
+
         if (::mediaSession.isInitialized) {
-            try { mediaSession.setMetadata(builder.build()) } catch (_: Exception) {}
+            try {
+                val metadata = builder.build()
+                mediaSession.setMetadata(metadata)
+                val echoed = mediaSession.controller.metadata
+                    ?.getBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART)
+                Logger.i(
+                    ART_TAG,
+                    "MediaSession metadata set art=${sessionArt?.let { "${it.width}x${it.height}" } ?: "none"} echoed=${echoed?.let { "${it.width}x${it.height}" } ?: "none"} uri=${lastCoverUrl.take(100)}"
+                )
+            } catch (e: Exception) {
+                Logger.e(ART_TAG, "MediaSession setMetadata failed: ${e.javaClass.simpleName}: ${e.message}", e)
+            }
         }
+    }
+
+    private fun bitmapForMediaSession(source: Bitmap): Bitmap {
+        val maxSide = maxOf(source.width, source.height)
+        if (maxSide <= MEDIA_SESSION_ART_MAX_PX) return source
+        val scale = MEDIA_SESSION_ART_MAX_PX.toFloat() / maxSide.toFloat()
+        val width = (source.width * scale).toInt().coerceAtLeast(1)
+        val height = (source.height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(source, width, height, true)
     }
 
     private fun loadCoverArt(url: String, trackKey: String, requestSeq: Long) {
@@ -1132,6 +1163,10 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                 conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
                 conn.connect()
                 val code = conn.responseCode
+                Logger.i(
+                    ART_TAG,
+                    "HTTP $code type=${conn.contentType ?: "?"} length=${conn.contentLengthLong} url=${url.take(120)}"
+                )
                 if (code !in 200..299) {
                     throw IllegalStateException("Cover HTTP $code")
                 }
@@ -1142,6 +1177,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                 val w = (raw.width * scale).toInt().coerceAtLeast(1)
                 val h = (raw.height * scale).toInt().coerceAtLeast(1)
                 val scaled = Bitmap.createScaledBitmap(raw, w, h, true)
+                Logger.i(ART_TAG, "decoded ${raw.width}x${raw.height} -> ${scaled.width}x${scaled.height}")
                 if (scaled != raw) raw.recycle()
                 mainHandler.post {
                     // A cover fetch can finish after another track has already won the race.
@@ -1156,6 +1192,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                     }
                     coverBitmap = scaled
                     coverBitmapTrackKey = trackKey
+                    Logger.i(ART_TAG, "bitmap applied ${scaled.width}x${scaled.height} track=${currentTitle.take(48)}")
                     updateMetadata()
                     showNotification()
                     pushWidgetState(force = true)
@@ -1281,6 +1318,10 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         actions.forEach { builder.addAction(it) }
 
         coverBitmap?.let { builder.setLargeIcon(it) }
+        Logger.i(
+            ART_TAG,
+            "notification build largeIcon=${coverBitmap?.let { "${it.width}x${it.height}" } ?: "none"} track=${currentTitle.take(48)}"
+        )
 
         return builder.build()
     }
