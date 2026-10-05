@@ -111,7 +111,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
             PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
             PlaybackStateCompat.ACTION_STOP or
-            PlaybackStateCompat.ACTION_SEEK_TO
+            PlaybackStateCompat.ACTION_SEEK_TO or
+            PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH
 
         private const val NOTIF_COLOR = 0xFFE0E0E0.toInt()
         private const val PLAYBACK_LOCK_RELEASE_GRACE_MS = 8_000L
@@ -765,6 +766,18 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             requestPlaybackState(true)
         }
 
+        override fun onPlayFromSearch(query: String?, extras: Bundle?) {
+            val q = query?.trim().orEmpty()
+            if (q.isEmpty()) {
+                requestPlaybackState(true)
+                return
+            }
+            wakeAndRun(
+                "if(typeof window.playSearchResult==='function')" +
+                    "window.playSearchResult(${jsString(q)});"
+            )
+        }
+
         override fun onPause() {
             requestPlaybackState(false)
         }
@@ -814,11 +827,12 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             addAction(ACTION_FAVORITE)
             addAction(ACTION_WIDGET_REFRESH)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(actionReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(actionReceiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            this,
+            actionReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
     }
 
     private fun registerDisconnectReceivers() {
