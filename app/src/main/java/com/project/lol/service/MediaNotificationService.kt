@@ -119,6 +119,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         private const val PLAYBACK_LOCK_GUARD_MS = 30_000L
         private const val PLAYBACK_WAKE_LOCK_TIMEOUT_MS = 120_000L
         private const val PLAYBACK_COMMAND_LOCK_TIMEOUT_MS = 15_000L
+        private const val COVER_TRANSITION_GRACE_MS = 1_200L
 
         var webView: WebView? = null
         var instance: MediaNotificationService? = null
@@ -254,6 +255,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     private var currentPosition: Long = 0L
     private var currentDuration: Long = 0L
     private var lastCoverUrl = ""
+    private var coverBitmapTrackKey = ""
+    private var coverRequestSeq = 0L
     private var lastActiveContextId: String? = null
     private var isRepeat = "false"
     private var wakeLock: PowerManager.WakeLock? = null
@@ -647,13 +650,17 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            coverRequestSeq++
             coverBitmap = null
+            coverBitmapTrackKey = ""
             lastCoverUrl = ""
         }
     }
 
     override fun onDestroy() {
         releasePlaybackLocksNow()
+        coverRequestSeq++
+        coverBitmapTrackKey = ""
         lastCoverUrl = ""
         if (instance === this) {
             // Detached MediaBrowser results must always be completed, even if the service goes
@@ -940,14 +947,42 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             currentArtist = obj.optString("artist", "")
             currentAlbum = obj.optString("album", "")
             val coverUrl = obj.optString("cover", "")
+            val coverTrackKey = currentCoverTrackKey()
+            val hasCoverUrl = coverUrl.isNotEmpty() && coverUrl != "null"
 
-            if (coverUrl.isNotEmpty() && coverUrl != "null" && coverUrl != lastCoverUrl) {
-                lastCoverUrl = coverUrl
-                coverBitmap = null
-                loadCoverArt(coverUrl)
-            } else if (coverUrl.isEmpty() || coverUrl == "null") {
+            if (hasCoverUrl) {
+                if (coverUrl == lastCoverUrl && coverBitmap != null) {
+                    // Same artwork (common inside one album): reuse the decoded bitmap immediately.
+                    coverRequestSeq++
+                    coverBitmapTrackKey = coverTrackKey
+                } else if (coverUrl != lastCoverUrl || coverBitmap == null) {
+                    // Keep the previous bitmap briefly while the new artwork is downloading. This
+                    // avoids a grey-note flash that makes Origin Island lose its artwork palette.
+                    val requestSeq = ++coverRequestSeq
+                    lastCoverUrl = coverUrl
+                    loadCoverArt(coverUrl, coverTrackKey, requestSeq)
+                }
+            } else {
+                // Spotify often publishes title/artist a fraction of a second before its cover DOM
+                // is mounted. Give that normal transition a short grace period instead of
+                // immediately replacing valid artwork with an empty MediaSession image.
                 lastCoverUrl = ""
-                coverBitmap = null
+                val requestSeq = ++coverRequestSeq
+                mainHandler.postDelayed({
+                    if (
+                        instance === this &&
+                        requestSeq == coverRequestSeq &&
+                        currentCoverTrackKey() == coverTrackKey &&
+                        lastCoverUrl.isEmpty() &&
+                        coverBitmapTrackKey != coverTrackKey
+                    ) {
+                        coverBitmap = null
+                        coverBitmapTrackKey = ""
+                        updateMetadata()
+                        showNotification()
+                        pushWidgetState(force = true)
+                    }
+                }, COVER_TRANSITION_GRACE_MS)
             }
 
             isPlaying = obj.optBoolean("playing", false)
@@ -1054,6 +1089,9 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         }
     }
 
+    private fun currentCoverTrackKey(): String =
+        "$currentTitle\u0001$currentArtist\u0001$currentAlbum"
+
     private fun updateMetadata() {
         val builder = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
@@ -1070,7 +1108,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         }
     }
 
-    private fun loadCoverArt(url: String) {
+    private fun loadCoverArt(url: String, trackKey: String, requestSeq: Long) {
         Thread {
             var conn: HttpURLConnection? = null
             try {
@@ -1086,19 +1124,39 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                 val scaled = Bitmap.createScaledBitmap(raw, w, h, true)
                 if (scaled != raw) raw.recycle()
                 mainHandler.post {
-                    // A cover fetch can finish after stopSelf()/onDestroy(). Never allow that old
-                    // worker to resurrect a notification or widget from a dead service.
-                    if (instance !== this || url != lastCoverUrl) {
+                    // A cover fetch can finish after another track has already won the race.
+                    if (
+                        instance !== this ||
+                        requestSeq != coverRequestSeq ||
+                        url != lastCoverUrl ||
+                        trackKey != currentCoverTrackKey()
+                    ) {
                         if (!scaled.isRecycled) scaled.recycle()
                         return@post
                     }
                     coverBitmap = scaled
+                    coverBitmapTrackKey = trackKey
                     updateMetadata()
                     showNotification()
                     pushWidgetState(force = true)
                 }
             } catch (e: Exception) {
                 Logger.w(TAG, "Cover art load failed: ${e.message}")
+                mainHandler.post {
+                    if (
+                        instance === this &&
+                        requestSeq == coverRequestSeq &&
+                        url == lastCoverUrl &&
+                        trackKey == currentCoverTrackKey() &&
+                        coverBitmapTrackKey != trackKey
+                    ) {
+                        coverBitmap = null
+                        coverBitmapTrackKey = ""
+                        updateMetadata()
+                        showNotification()
+                        pushWidgetState(force = true)
+                    }
+                }
             } finally {
                 runCatching { conn?.disconnect() }
             }
