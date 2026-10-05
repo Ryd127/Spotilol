@@ -1,84 +1,124 @@
-# Building the repaired Spotilol RC
+# Building Spotilol
 
-This project keeps the original Spotilol application ID and behavior. The build changes added during the repair work are only intended to make a clean checkout reproducibly buildable.
+Current source version: **1.1.9 (19)**  
+Application ID: `com.project.lol`
 
-## Required toolchain
+This repository keeps Spotilol's original application identity and core behavior while adding build hardening, Android 16 KiB page-size compatibility, release verification, and security fixes around WebView/native bridge boundaries.
+
+## Toolchain
 
 - JDK 17
-- Gradle 9.7.1 (the included Gradle Wrapper downloads it)
+- Gradle 9.7.1 (via the committed Gradle Wrapper)
 - Android SDK Platform 37
 - Android Build Tools 36.0.0
 - Android NDK 28.2.13676358
 - CMake 3.22.1
+- minSdk 28
+- targetSdk 36
+- compileSdk 37
 
-The project targets Android API 36 and compiles against API 37.
+## Local build
 
-## Windows / Android Studio
+Open the project in Android Studio and let SDK Manager install the requested components, or run `build-apk.ps1` on Windows.
 
-Open the project in Android Studio and let SDK Manager install the requested components, or run `build-apk.ps1` from PowerShell. The helper writes `local.properties`, installs missing SDK packages when `sdkmanager.bat` is available, then runs both `assembleDebug` and `assembleRelease`.
-
-Produced files are under:
+Gradle outputs are written to:
 
 - `app/build/outputs/apk/debug/`
 - `app/build/outputs/apk/release/`
 
-The debug APK is automatically signed with the local Android debug key. A release APK is signed only when `keystore/keystore.properties` and the referenced key file are present.
+The debug APK uses the normal Android debug key.
 
-## GitHub Actions
+A release APK is signed only when both of these are present:
 
-`.github/workflows/build-apk.yml` installs the exact SDK/NDK/CMake versions with `sdkmanager`, then builds Debug and Release separately. With no repository secrets it produces an installable debug APK and an unsigned release APK. Both Gradle logs and the SDK/environment diagnostics are uploaded even when compilation or verification fails, so the first failing CI run is actionable instead of losing the compiler output.
+- `keystore/keystore.properties`
+- the keystore referenced by that properties file
 
-For a signed release, configure these GitHub Actions secrets:
+Private signing keys and Firebase credentials are intentionally excluded by `.gitignore`.
 
-- `SPOTILOL_KEYSTORE_B64` - base64 of the JKS/keystore file
+## Release signing
+
+The app reads the following properties from `keystore/keystore.properties`:
+
+```properties
+storeFile=release.jks
+storePassword=...
+keyAlias=...
+keyPassword=...
+```
+
+GitHub Actions uses these repository secrets for production signing:
+
+- `SPOTILOL_KEYSTORE_B64`
 - `SPOTILOL_STORE_PASSWORD`
 - `SPOTILOL_KEY_ALIAS`
 - `SPOTILOL_KEY_PASSWORD`
 
-The workflow checks 16 KiB ZIP alignment plus PT_LOAD and GNU_RELRO layout for 64-bit native libraries, requires the debug APK (and any release built with configured signing secrets) to pass signature verification, and emits SHA-256 hashes. Debug, Release, and verification are independent diagnostic stages: their logs are always uploaded under `ci-logs/`, each rerun gets its own artifact name, and a final gate keeps the workflow red if any stage fails.
+When those secrets are unavailable, CI creates an ephemeral test signing key so the release variant can still be built and verified. That fallback key is not suitable for distributing update-compatible production APKs.
 
-## Important signing note
+The workflow currently pins the expected production certificate SHA-256 fingerprint to:
 
-The original APK supplied for comparison is signed with an APK Signature Scheme v2 signer whose certificate SHA-256 fingerprint is:
+`A5:75:7D:4B:CA:7F:09:39:AC:CC:83:D8:E9:B7:30:17:B1:8C:6A:F4:5A:E5:F8:EB:A6:94:24:9F:80:EB:A9:85`
+
+If the original project author builds with the original Spotilol signing key instead, the expected production fingerprint in `.github/workflows/build-apk.yml` must be updated to match that certificate.
+
+### Update compatibility with the original app
+
+The original APK used for comparison was signed with:
 
 `59:1E:75:59:98:48:8E:5A:0F:C1:4A:A9:5B:C0:EB:CE:B6:46:50:82:19:E2:BF:07:3B:60:CF:28:58:E5:AC:E8`
 
-Certificate subject: `CN=Spotilol, OU=Mobile, O=Spotilol, L=Unknown, ST=Unknown, C=US`.
+Android only allows an APK to update an installed app when the signing identity is compatible. Therefore, a build signed with a different private key cannot directly update an installation signed by the original author's key.
 
-A debug APK or an APK signed with a different key **cannot update an already-installed copy signed by the author's key**. Android will reject it as a signature mismatch. To install such a build you must uninstall the author-signed app first, which also removes its app-private data, or obtain/use the same private signing key as the original author.
+## GitHub Actions gates
 
-Do not commit private signing keys or Firebase credentials. The existing `.gitignore` intentionally excludes them.
-## Release dependency hardening
+`.github/workflows/build-apk.yml` performs the complete release validation pipeline:
 
-Part 15 pins the current stable `androidx.graphics:graphics-path` and `graphics-shapes`
-line to `1.1.0`. The upstream 1.1.8 APK resolves `graphics-path`/`graphics-shapes`
-`1.0.1`; its arm64 `libandroidx.graphics.path.so` has a GNU_RELRO end that is not
-16 KiB aligned. AndroidX Graphics 1.1.0 is the current stable line and its native
-build explicitly enables 16 KiB ELF page alignment.
+1. verifies the committed Gradle Wrapper JAR and Gradle distribution checksum;
+2. installs the exact Android SDK, Build Tools, NDK and CMake versions;
+3. records the build environment;
+4. resolves and audits critical release dependencies;
+5. runs the release R8 configuration analyzer;
+6. runs focused unit tests for trusted WebView origins;
+7. runs Android Lint on the release variant;
+8. builds Debug and Release APKs;
+9. validates package ID, version, SDK levels and debuggable state with `apkanalyzer`;
+10. verifies 16 KiB ZIP alignment plus native ELF LOAD/RELRO alignment;
+11. verifies APK signatures and, for production builds, the expected signing certificate;
+12. creates a clean distributable package with the production APK, `SHA256SUMS.txt` and `RELEASE_INFO.txt`.
 
-DataStore is deliberately **not** force-upgraded here. The upstream APK resolves
-DataStore `1.1.7`, while public reports also show RELRO/page-size problems in later
-DataStore builds. Glance uses normal single-process Preferences DataStore in this
-project, so changing or removing DataStore's native shared-counter binary without a
-real device/build test would add more risk than it removes. The CI ELF/RELRO gate
-therefore remains authoritative: the first real build must pass it before release.
+The final CI gate fails if any required audit, test, build, APK verification or packaging stage fails.
 
-The CI workflow writes `ci-logs/release-dependencies.log` with the full
-`releaseRuntimeClasspath` plus `dependencyInsight` for Graphics, DataStore,
-WorkManager, Room and Glance. APK verification also prints the packaged AndroidX
-`META-INF/*.version` values, so the resolved release graph is visible from the first
-real runner execution.
+## 16 KiB native compatibility
 
-## Final RC build gates
+The project packages native code for:
 
-The CI workflow also verifies the checked-in Gradle 9.7.1 wrapper JAR against Gradle's
-official SHA-256 and confirms the wrapper distribution checksum before invoking Gradle.
-AGP 9.4's standalone `:app:analyzeReleaseR8Config` task is run as an independent
-release gate; its HTML report and the regular release mapping/config-analyzer outputs are
-uploaded with the CI artifact.
+- `arm64-v8a`
+- `armeabi-v7a`
 
-Every produced APK is inspected with `apkanalyzer` before it is accepted. The package must
-remain `com.project.lol`, version name/code must remain `1.1.8` / `18`, minSdk/targetSdk
-must remain `28` / `36`, Debug must be debuggable and Release must not be debuggable.
-These identity checks run in addition to signature verification and the 16 KiB ZIP/ELF/RELRO
-gates, so an accidentally misconfigured variant cannot be mistaken for the final Spotilol RC.
+The local AndroidX compatibility rebuilds plus the LAME and Opus JNI libraries are linked with explicit 16 KiB page-size support. CI independently checks the packaged APK so future toolchain or dependency changes cannot silently regress this requirement.
+
+## WebView security hardening
+
+The privileged `AndBridge` JavaScript interface is restricted to explicitly trusted Spotify origins. OAuth pages can remain inside the WebView for login, but do not receive the native bridge.
+
+External deep links are validated against an exact HTTPS allowlist, and the native `nFetch` bridge is restricted to expected Spotify/CDN targets instead of acting as a generic network proxy.
+
+Focused unit tests cover these origin rules and are required by CI.
+
+## Automated GitHub releases
+
+A tag named exactly `v<versionName>` triggers release publication after the build passes all gates.
+
+For example:
+
+```text
+v1.1.9
+```
+
+The release job verifies that the tag matches the APK version, requires production signing, validates the certificate and SHA-256 checksum, then publishes:
+
+- `Spotilol-<version>-production.apk`
+- `SHA256SUMS.txt`
+- `RELEASE_INFO.txt`
+
+Release descriptions are intentionally left empty.
