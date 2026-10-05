@@ -675,7 +675,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             try { mediaSession.release() } catch (_: Exception) {}
         }
         try {
-            VivoOriginIsland.unmount(this, NOTIFICATION_ID, CHANNEL_ID)
+            VivoOriginIsland.cancel(this)
             stopForeground(STOP_FOREGROUND_REMOVE)
             getSystemService(NotificationManager::class.java)
                 .cancel(NOTIFICATION_ID)
@@ -1118,6 +1118,14 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     private fun showNotification() {
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(NOTIFICATION_ID, buildNotificationSafe())
+        VivoOriginIsland.post(
+            context = this,
+            title = currentTitle,
+            artist = currentArtist,
+            positionMs = currentPosition,
+            durationMs = currentDuration,
+            accentColor = accent(),
+        )
     }
 
     private fun buildNotificationSafe(): Notification {
@@ -1215,16 +1223,6 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         actions.forEach { builder.addAction(it) }
 
         coverBitmap?.let { builder.setLargeIcon(it) }
-
-        VivoOriginIsland.applyTo(
-            context = this,
-            builder = builder,
-            title = currentTitle,
-            artist = currentArtist,
-            positionMs = currentPosition,
-            durationMs = currentDuration,
-            accentColor = accent(),
-        )
 
         return builder.build()
     }
@@ -1387,7 +1385,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             try { mediaSession.isActive = false } catch (_: Exception) {}
         }
         try {
-            VivoOriginIsland.unmount(this, NOTIFICATION_ID, CHANNEL_ID)
+            VivoOriginIsland.cancel(this)
             getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
         } catch (_: Exception) {}
         try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
@@ -1404,7 +1402,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             }
             releasePlaybackLocksNow()
             try {
-                VivoOriginIsland.unmount(this, NOTIFICATION_ID, CHANNEL_ID)
+                VivoOriginIsland.cancel(this)
                 getSystemService(NotificationManager::class.java)
                     .cancel(NOTIFICATION_ID)
             } catch (_: Exception) {}
