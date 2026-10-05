@@ -82,6 +82,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -145,6 +146,7 @@ fun OfflineScreen(
     onExit: () -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -266,7 +268,7 @@ fun OfflineScreen(
             val ok = withContext(Dispatchers.IO) { OfflineStore.deleteSong(context, song) }
             songs = songs.filterNot { it.id == song.id && it.uri == song.uri }
             if (!ok) {
-                Toast.makeText(context, context.getString(R.string.offline_toast_could_not_delete_file), Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, resources.getString(R.string.offline_toast_could_not_delete_file), Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -285,7 +287,7 @@ fun OfflineScreen(
             if (failed > 0) {
                 Toast.makeText(
                     context,
-                    if (failed == 1) context.getString(R.string.offline_toast_could_not_delete_one_file) else context.getString(R.string.offline_toast_could_not_delete_files, failed),
+                    if (failed == 1) resources.getString(R.string.offline_toast_could_not_delete_one_file) else resources.getString(R.string.offline_toast_could_not_delete_files, failed),
                     Toast.LENGTH_SHORT
                 ).show()
                 songs = withContext(Dispatchers.IO) { OfflineStore.loadSongs(context) }
@@ -315,6 +317,17 @@ fun OfflineScreen(
             }
 
             override fun onSeekTo(position: Long) = seekTo(position)
+
+            override fun onPlayFromSearch(query: String) {
+                scope.launch {
+                    val matches = withContext(Dispatchers.Default) {
+                        searchEngine.filter(songs, query, songExtractor)
+                    }
+                    val match = matches.firstOrNull() ?: return@launch
+                    val index = songs.indexOfFirst { it.id == match.id && it.uri == match.uri }
+                    if (index >= 0) play(index)
+                }
+            }
         }
         OfflineMediaService.controller = ctrl
         onDispose {

@@ -23,6 +23,7 @@ import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import androidx.media.app.NotificationCompat.MediaStyle
 import androidx.media.session.MediaButtonReceiver
 import com.project.lol.R
@@ -61,7 +62,8 @@ class OfflineMediaService : Service() {
                 PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
                 PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
                 PlaybackStateCompat.ACTION_STOP or
-                PlaybackStateCompat.ACTION_SEEK_TO
+                PlaybackStateCompat.ACTION_SEEK_TO or
+                PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH
 
         private const val NOTIF_COLOR = 0xFF1DB954.toInt()
 
@@ -75,6 +77,7 @@ class OfflineMediaService : Service() {
         fun onPrev()
         fun onStop()
         fun onSeekTo(position: Long)
+        fun onPlayFromSearch(query: String)
     }
 
     private lateinit var mediaSession: MediaSessionCompat
@@ -224,6 +227,15 @@ class OfflineMediaService : Service() {
                     if (isPlaying) OfflineMediaService.controller?.onPlayPause()
                 }
 
+                override fun onPlayFromSearch(query: String?, extras: Bundle?) {
+                    val q = query?.trim().orEmpty()
+                    if (q.isNotEmpty()) {
+                        OfflineMediaService.controller?.onPlayFromSearch(q)
+                    } else if (!isPlaying) {
+                        OfflineMediaService.controller?.onPlayPause()
+                    }
+                }
+
                 override fun onSkipToNext() {
                     OfflineMediaService.controller?.onNext()
                 }
@@ -253,11 +265,12 @@ class OfflineMediaService : Service() {
             addAction(ACTION_WIDGET_REFRESH)
             addAction(Intent.ACTION_MEDIA_BUTTON)
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(actionReceiver, filter, RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(actionReceiver, filter)
-        }
+        ContextCompat.registerReceiver(
+            this,
+            actionReceiver,
+            filter,
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
 
         val noisyFilter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

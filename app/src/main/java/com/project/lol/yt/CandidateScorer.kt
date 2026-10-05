@@ -1,5 +1,6 @@
 package com.project.lol.yt
 
+import android.os.Build
 import com.project.lol.innertube.models.SongItem
 import java.text.Normalizer
 import kotlin.math.abs
@@ -44,10 +45,19 @@ object CandidateScorer {
             .replace(Regex("""\s+"""), " ")
             .trim()
 
-    private val anyLatinTransliterator by lazy {
-        runCatching {
-            android.icu.text.Transliterator.getInstance("Any-Latin; Latin-ASCII")
-        }.getOrNull()
+    private val anyLatinTransliterator: ((String) -> String)? by lazy {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            runCatching {
+                val transliterator =
+                    android.icu.text.Transliterator.getInstance("Any-Latin; Latin-ASCII")
+                val transform: (String) -> String = { value ->
+                    transliterator.transliterate(value)
+                }
+                transform
+            }.getOrNull()
+        } else {
+            null
+        }
     }
 
     private fun foldLatinDiacritics(value: String): String =
@@ -77,7 +87,7 @@ object CandidateScorer {
                 value,
                 foldLatinDiacritics(value),
                 transliterateCyrillic(value),
-                anyLatinTransliterator?.transliterate(value),
+                anyLatinTransliterator?.invoke(value),
             )
                 .map(::normalizedForMatch)
                 .filter { it.isNotBlank() }

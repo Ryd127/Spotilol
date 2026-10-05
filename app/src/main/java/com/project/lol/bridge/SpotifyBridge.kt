@@ -8,6 +8,7 @@ import android.widget.Toast
 import com.project.lol.R
 import com.project.lol.service.MediaNotificationService
 import com.project.lol.webview.helpers.AdIdStore
+import com.project.lol.webview.TrustedOrigins
 import org.json.JSONArray
 import org.json.JSONObject
 import java.lang.ref.WeakReference
@@ -31,6 +32,8 @@ class SpotifyBridge(activityRef: WeakReference<Activity>) {
             "sec-ch-ua-bitness",
             "sec-ch-ua-model"
         )
+
+        private val ALLOWED_NATIVE_FETCH_METHODS = setOf("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 
         private const val TAG = "bridge"
         private const val CALL = "bridge.call"
@@ -281,10 +284,18 @@ class SpotifyBridge(activityRef: WeakReference<Activity>) {
             }
         }
 
+        if (!TrustedOrigins.isNativeFetchTarget(url)) {
+            Logger.w(TAG, "nFetch blocked untrusted target: ${url.take(140)}")
+            return errorResult(IllegalArgumentException("Blocked native fetch target"))
+        }
+
         var conn: HttpURLConnection? = null
         return try {
             val opts = if (optsJson.isNullOrBlank()) JSONObject() else JSONObject(optsJson)
-            val method = opts.optString("method", "GET")
+            val method = opts.optString("method", "GET").uppercase(Locale.ROOT)
+            if (method !in ALLOWED_NATIVE_FETCH_METHODS) {
+                return errorResult(IllegalArgumentException("Blocked native fetch method"))
+            }
             val body = if (opts.has("body") && !opts.isNull("body")) opts.getString("body") else null
             val headersJson =
                 if (opts.has("headers") && !opts.isNull("headers")) opts.getJSONObject("headers") else JSONObject()

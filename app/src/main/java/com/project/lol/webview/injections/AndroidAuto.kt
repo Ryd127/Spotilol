@@ -405,12 +405,27 @@ object AndroidAuto {
                     rawArtists.slice(2).forEach(pushItem);
 
                     AndBridge.onSearchCompleted(query, requestToken, JSON.stringify(results));
+                    return results;
                 } catch (e) {
                     console.error('Search error for ' + query, e);
                     AndBridge.onSearchCompleted(query, requestToken, '[]');
+                    return [];
                 }
             }
             window.searchMediaItems = searchMediaItems;
+
+            window.playSearchResult = async function(query) {
+                var results = await searchMediaItems(query, '');
+                var playable = (results || []).find(function(item) {
+                    return item && !item.browsable && item.id &&
+                        (item.id.indexOf('spotify:track:') === 0 || item.id.indexOf('spotify:episode:') === 0);
+                });
+                if (playable && typeof window.playFromUri === 'function') {
+                    window.playFromUri(playable.id);
+                    return true;
+                }
+                return false;
+            };
         
     """
 }
