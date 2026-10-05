@@ -154,6 +154,16 @@ jobs:
           ./gradlew --no-daemon --stacktrace --warning-mode all --console=plain :app:testDebugUnitTest \
             2>&1 | tee ci-logs/unit-tests.log
 
+      - name: Run Android lint
+        id: lint_audit
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-logs
+          ./gradlew --no-daemon --stacktrace --warning-mode all --console=plain :app:lintRelease \
+            2>&1 | tee ci-logs/lint-release.log
+
       - name: Configure release signing
         shell: bash
         env:
@@ -394,6 +404,8 @@ jobs:
             app/build/reports/r8/**
             app/build/reports/tests/**
             app/build/test-results/**
+            app/build/reports/lint-results-release.*
+            app/build/reports/lint-results-release/**
             app/build/outputs/mapping/release/**
 
       - name: Enforce build result
@@ -406,6 +418,7 @@ jobs:
           DEPENDENCY_OUTCOME: ${{ steps.dependency_audit.outcome }}
           R8_OUTCOME: ${{ steps.r8_audit.outcome }}
           TEST_OUTCOME: ${{ steps.unit_tests.outcome }}
+          LINT_OUTCOME: ${{ steps.lint_audit.outcome }}
           PACKAGE_OUTCOME: ${{ steps.prepare_release.outcome }}
         run: |
           echo "Debug build:   ${DEBUG_OUTCOME}"
@@ -414,8 +427,9 @@ jobs:
           echo "Dependencies:  ${DEPENDENCY_OUTCOME}"
           echo "R8 analyzer:   ${R8_OUTCOME}"
           echo "Unit tests:    ${TEST_OUTCOME}"
+          echo "Android lint:  ${LINT_OUTCOME}"
           echo "Release pack:  ${PACKAGE_OUTCOME}"
-          if [[ "$DEPENDENCY_OUTCOME" != "success" || "$R8_OUTCOME" != "success" || "$TEST_OUTCOME" != "success" || "$DEBUG_OUTCOME" != "success" || "$RELEASE_OUTCOME" != "success" || "$VERIFY_OUTCOME" != "success" || "$PACKAGE_OUTCOME" != "success" ]]; then
+          if [[ "$DEPENDENCY_OUTCOME" != "success" || "$R8_OUTCOME" != "success" || "$TEST_OUTCOME" != "success" || "$LINT_OUTCOME" != "success" || "$DEBUG_OUTCOME" != "success" || "$RELEASE_OUTCOME" != "success" || "$VERIFY_OUTCOME" != "success" || "$PACKAGE_OUTCOME" != "success" ]]; then
             echo "Spotilol build/verification/release packaging failed. Download the diagnostics artifact for full logs." >&2
             exit 1
           fi
