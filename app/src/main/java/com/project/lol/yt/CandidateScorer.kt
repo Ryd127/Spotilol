@@ -50,7 +50,10 @@ object CandidateScorer {
             runCatching {
                 val transliterator =
                     android.icu.text.Transliterator.getInstance("Any-Latin; Latin-ASCII")
-                { value: String -> transliterator.transliterate(value) }
+                val transform: (String) -> String = { value ->
+                    transliterator.transliterate(value)
+                }
+                transform
             }.getOrNull()
         } else {
             null
