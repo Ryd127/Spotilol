@@ -961,7 +961,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             )
 
             if (hasCoverUrl) {
-                if (coverUrl == lastCoverUrl && coverBitmap != null) {
+                if (coverUrl == lastCoverUrl && coverBitmap != null && coverBitmapTrackKey == coverTrackKey) {
                     // Same artwork (common inside one album): reuse the decoded bitmap immediately.
                     coverRequestSeq++
                     coverBitmapTrackKey = coverTrackKey
@@ -971,7 +971,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                     // and then try to patch artwork in a second metadata event. Vivo deduplicates
                     // artwork-only metadata changes once title/artist/duration are already equal.
                     artworkPublishPending = true
-                    if (coverUrl != lastCoverUrl || coverBitmap == null) {
+                    if (coverUrl != lastCoverUrl || coverBitmap == null || coverBitmapTrackKey != coverTrackKey) {
                         val requestSeq = ++coverRequestSeq
                         lastCoverUrl = coverUrl
                         loadCoverArt(coverUrl, coverTrackKey, requestSeq)
