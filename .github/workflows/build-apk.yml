@@ -15,6 +15,7 @@ env:
   ANDROID_BUILD_TOOLS: '36.0.0'
   ANDROID_NDK: '28.2.13676358'
   ANDROID_CMAKE: '3.22.1'
+  SPOTILOL_PRODUCTION_CERT_SHA256: 'a5757d4bca7f0939accc83d8e9b73017b18c6af45ae5f8eba694249f80eba985'
 
 jobs:
   build:
@@ -160,6 +161,7 @@ jobs:
           keyAlias=${KEY_ALIAS}
           keyPassword=${KEY_PASSWORD}
           EOF
+            echo "SPOTILOL_SIGNING_MODE=production" >> "$GITHUB_ENV"
             echo "Release signing mode: production secret keystore"
           else
             ci_password="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
@@ -179,6 +181,7 @@ jobs:
           keyAlias=spotilol-ci
           keyPassword=${ci_password}
           EOF
+            echo "SPOTILOL_SIGNING_MODE=ci-test" >> "$GITHUB_ENV"
             echo "Release signing mode: ephemeral CI test key"
             echo "WARNING: This certificate is intentionally regenerated per CI run and is not suitable for production upgrades."
           fi
@@ -217,11 +220,18 @@ jobs:
           set -euo pipefail
           mkdir -p ci-logs
           shopt -s nullglob
-          apks=(app/build/outputs/apk/debug/*.apk app/build/outputs/apk/release/*.apk)
-          if (( ${#apks[@]} == 0 )); then
-            echo "No APKs produced" | tee ci-logs/apk-verification.log >&2
+          debug_apks=(app/build/outputs/apk/debug/*.apk)
+          release_apks=(app/build/outputs/apk/release/*.apk)
+          apks=("${debug_apks[@]}" "${release_apks[@]}")
+          if (( ${#debug_apks[@]} != 1 || ${#release_apks[@]} != 1 )); then
+            echo "Expected exactly one debug and one release APK; found debug=${#debug_apks[@]} release=${#release_apks[@]}" \
+              | tee ci-logs/apk-verification.log >&2
             exit 1
           fi
+
+          expected_version_name="$(apkanalyzer manifest version-name "${release_apks[0]}" | tr -d '\r\n')"
+          expected_version_code="$(apkanalyzer manifest version-code "${release_apks[0]}" | tr -d '\r\n')"
+          echo "Expected version from release APK: ${expected_version_name}(${expected_version_code})"
 
           : > SHA256SUMS.txt
           : > ci-logs/apk-verification.log
@@ -238,8 +248,8 @@ jobs:
               debuggable="$(apkanalyzer manifest debuggable "$apk" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
               echo "APK identity: id=${app_id} version=${version_name}(${version_code}) minSdk=${min_sdk} targetSdk=${target_sdk} debuggable=${debuggable}"
               [[ "$app_id" == "com.project.lol" ]]
-              [[ "$version_name" == "1.1.8" ]]
-              [[ "$version_code" == "18" ]]
+              [[ "$version_name" == "$expected_version_name" ]]
+              [[ "$version_code" == "$expected_version_code" ]]
               [[ "$min_sdk" == "28" ]]
               [[ "$target_sdk" == "36" ]]
               if [[ "$apk" == *"/debug/"* ]]; then
@@ -266,6 +276,13 @@ jobs:
               if "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --verbose "$apk" >/dev/null 2>&1; then
                 echo "Signature: valid"
                 "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --print-certs "$apk" | sed -n '1,12p'
+                if [[ "$apk" != *"/debug/"* && "${SPOTILOL_SIGNING_MODE:-}" == "production" ]]; then
+                  actual_cert_sha="$("${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --print-certs "$apk" \
+                    | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print tolower($2); exit}')"
+                  echo "Production certificate SHA-256: ${actual_cert_sha}"
+                  [[ "$actual_cert_sha" == "${SPOTILOL_PRODUCTION_CERT_SHA256}" ]]
+                  echo "Production certificate: verified"
+                fi
               elif [[ "$apk" == *"/debug/"* || -f keystore/keystore.properties ]]; then
                 echo "Signature: INVALID (debug APKs and configured signed releases must verify)" >&2
                 "${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --verbose "$apk" || true
@@ -276,16 +293,91 @@ jobs:
             } 2>&1 | tee -a ci-logs/apk-verification.log
           done
 
-      - name: Upload APKs and CI diagnostics
+      - name: Prepare distributable release package
+        id: prepare_release
+        if: steps.verify_apks.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          mkdir -p dist/release
+
+          release_apks=(app/build/outputs/apk/release/*.apk)
+          if (( ${#release_apks[@]} != 1 )); then
+            echo "Expected exactly one release APK, found ${#release_apks[@]}" >&2
+            exit 1
+          fi
+          release_apk="${release_apks[0]}"
+
+          app_id="$(apkanalyzer manifest application-id "$release_apk" | tr -d '\r\n')"
+          version_name="$(apkanalyzer manifest version-name "$release_apk" | tr -d '\r\n')"
+          version_code="$(apkanalyzer manifest version-code "$release_apk" | tr -d '\r\n')"
+          min_sdk="$(apkanalyzer manifest min-sdk "$release_apk" | tr -d '\r\n')"
+          target_sdk="$(apkanalyzer manifest target-sdk "$release_apk" | tr -d '\r\n')"
+          debuggable="$(apkanalyzer manifest debuggable "$release_apk" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
+
+          safe_version="$(printf '%s' "$version_name" | tr -c 'A-Za-z0-9._-' '-')"
+          release_label="${SPOTILOL_SIGNING_MODE:-unknown}"
+          output_name="Spotilol-${safe_version}-${release_label}.apk"
+          output_path="dist/release/${output_name}"
+          cp "$release_apk" "$output_path"
+
+          cert_sha="$("${ANDROID_SDK_ROOT}/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --print-certs "$output_path" \
+            | awk -F': ' '/Signer #1 certificate SHA-256 digest:/ {print tolower($2); exit}')"
+          apk_sha="$(sha256sum "$output_path" | awk '{print $1}')"
+
+          if [[ "$release_label" == "production" ]]; then
+            [[ "$cert_sha" == "${SPOTILOL_PRODUCTION_CERT_SHA256}" ]]
+          fi
+
+          (
+            cd dist/release
+            sha256sum "$output_name" > SHA256SUMS.txt
+          )
+
+          cat > dist/release/RELEASE_INFO.txt <<EOF
+          Product: Spotilol
+          Application ID: ${app_id}
+          Version name: ${version_name}
+          Version code: ${version_code}
+          Build type: release
+          Debuggable: ${debuggable}
+          Min SDK: ${min_sdk}
+          Target SDK: ${target_sdk}
+          Signing mode: ${release_label}
+          Certificate SHA-256: ${cert_sha}
+          APK filename: ${output_name}
+          APK SHA-256: ${apk_sha}
+          16 KiB ELF layout: verified
+          zipalign -P 16: verified
+          APK signature: verified
+          Git commit: ${GITHUB_SHA}
+          GitHub Actions run: ${GITHUB_RUN_ID}
+          EOF
+
+          echo "Prepared release package:"
+          cat dist/release/RELEASE_INFO.txt
+          cat dist/release/SHA256SUMS.txt
+
+      - name: Upload distributable release package
+        if: steps.prepare_release.outcome == 'success'
+        uses: actions/upload-artifact@v7
+        with:
+          name: Spotilol-release-${{ github.run_number }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dist/release/**
+
+      - name: Upload CI diagnostics
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: spotilol-build-${{ github.run_number }}-${{ github.run_attempt }}
+          name: spotilol-ci-diagnostics-${{ github.run_number }}-${{ github.run_attempt }}
           if-no-files-found: warn
           retention-days: 14
           path: |
             app/build/outputs/apk/debug/*.apk
-            app/build/outputs/apk/release/*.apk
             SHA256SUMS.txt
             ci-logs/**
             app/build/reports/r8/**
@@ -300,13 +392,15 @@ jobs:
           VERIFY_OUTCOME: ${{ steps.verify_apks.outcome }}
           DEPENDENCY_OUTCOME: ${{ steps.dependency_audit.outcome }}
           R8_OUTCOME: ${{ steps.r8_audit.outcome }}
+          PACKAGE_OUTCOME: ${{ steps.prepare_release.outcome }}
         run: |
           echo "Debug build:   ${DEBUG_OUTCOME}"
           echo "Release build: ${RELEASE_OUTCOME}"
           echo "APK verify:    ${VERIFY_OUTCOME}"
           echo "Dependencies:  ${DEPENDENCY_OUTCOME}"
           echo "R8 analyzer:   ${R8_OUTCOME}"
-          if [[ "$DEPENDENCY_OUTCOME" != "success" || "$R8_OUTCOME" != "success" || "$DEBUG_OUTCOME" != "success" || "$RELEASE_OUTCOME" != "success" || "$VERIFY_OUTCOME" != "success" ]]; then
-            echo "Spotilol build/verification failed. Download the spotilol-build artifact for full logs." >&2
+          echo "Release pack:  ${PACKAGE_OUTCOME}"
+          if [[ "$DEPENDENCY_OUTCOME" != "success" || "$R8_OUTCOME" != "success" || "$DEBUG_OUTCOME" != "success" || "$RELEASE_OUTCOME" != "success" || "$VERIFY_OUTCOME" != "success" || "$PACKAGE_OUTCOME" != "success" ]]; then
+            echo "Spotilol build/verification/release packaging failed. Download the diagnostics artifact for full logs." >&2
             exit 1
           fi
