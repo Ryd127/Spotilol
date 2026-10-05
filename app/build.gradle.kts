@@ -41,8 +41,8 @@ android {
         applicationId = "com.project.lol"
         minSdk = 28
         targetSdk = 36
-        versionCode = 20
-        versionName = "1.1.10-island1"
+        versionCode = 21
+        versionName = "1.1.10-island2"
         buildConfigField("boolean", "FIREBASE_ENABLED", firebaseConfigPresent.toString())
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
