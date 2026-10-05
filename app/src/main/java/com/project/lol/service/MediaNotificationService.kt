@@ -388,6 +388,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     private var lastMediaStatusJson: String? = null
     private var firstHeadsetCallback = true
     private var accentCache = 0
+    private var artworkPublishPending = false
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "PaletteSeed" || key == "MaterialYou") {
@@ -964,17 +965,26 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                     // Same artwork (common inside one album): reuse the decoded bitmap immediately.
                     coverRequestSeq++
                     coverBitmapTrackKey = coverTrackKey
-                } else if (coverUrl != lastCoverUrl || coverBitmap == null) {
-                    // Keep the previous bitmap briefly while the new artwork is downloading. This
-                    // avoids a grey-note flash that makes Origin Island lose its artwork palette.
-                    val requestSeq = ++coverRequestSeq
-                    lastCoverUrl = coverUrl
-                    loadCoverArt(coverUrl, coverTrackKey, requestSeq)
+                    artworkPublishPending = false
+                } else {
+                    // Do not publish a new track with the previous track's image (or with no image)
+                    // and then try to patch artwork in a second metadata event. Vivo deduplicates
+                    // artwork-only metadata changes once title/artist/duration are already equal.
+                    artworkPublishPending = true
+                    if (coverUrl != lastCoverUrl || coverBitmap == null) {
+                        val requestSeq = ++coverRequestSeq
+                        lastCoverUrl = coverUrl
+                        loadCoverArt(coverUrl, coverTrackKey, requestSeq)
+                    }
                 }
+            } else if (coverBitmap != null && coverBitmapTrackKey == coverTrackKey) {
+                // A transient DOM miss for the same track must not hide artwork that is already
+                // correct for this track.
+                artworkPublishPending = false
             } else {
                 // Spotify often publishes title/artist a fraction of a second before its cover DOM
-                // is mounted. Give that normal transition a short grace period instead of
-                // immediately replacing valid artwork with an empty MediaSession image.
+                // is mounted. Hold externally-visible metadata until artwork appears or grace expires.
+                artworkPublishPending = true
                 lastCoverUrl = ""
                 val requestSeq = ++coverRequestSeq
                 mainHandler.postDelayed({
@@ -987,9 +997,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                     ) {
                         coverBitmap = null
                         coverBitmapTrackKey = ""
-                        updateMetadata()
-                        showNotification()
-                        pushWidgetState(force = true)
+                        artworkPublishPending = false
+                        publishMediaSurfaces("no-art-fallback")
                     }
                 }, COVER_TRANSITION_GRACE_MS)
             }
@@ -1007,9 +1016,14 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             if (isPlaying) acquirePlaybackLocks() else schedulePlaybackLocksRelease()
 
             updatePlaybackState()
-            updateMetadata()
-            showNotification()
-            pushWidgetState(force = true)
+            if (artworkPublishPending) {
+                Logger.i(
+                    ART_TAG,
+                    "metadata publish deferred reason=await-art track=${currentTitle.take(48)} artKeyMatch=${coverBitmapTrackKey == coverTrackKey}"
+                )
+            } else {
+                publishMediaSurfaces("status-ready")
+            }
         } catch (e: Exception) {
             Logger.e(ART_TAG, "media status apply failed: ${e.message}", e)
         }
@@ -1103,22 +1117,41 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     private fun currentCoverTrackKey(): String =
         "$currentTitle\u0001$currentArtist\u0001$currentAlbum"
 
+    private fun publishMediaSurfaces(reason: String) {
+        Logger.i(
+            ART_TAG,
+            "metadata publish reason=$reason track=${currentTitle.take(48)} artKeyMatch=${coverBitmapTrackKey == currentCoverTrackKey()} bitmap=${coverBitmap?.let { "${it.width}x${it.height}" } ?: "none"}"
+        )
+        updateMetadata()
+        showNotification()
+        pushWidgetState(force = true)
+    }
+
     private fun updateMetadata() {
+        if (artworkPublishPending && currentTitle.isNotBlank()) {
+            Logger.i(ART_TAG, "MediaSession metadata deferred pending-art track=${currentTitle.take(48)}")
+            return
+        }
+
+        val metadataTrackKey = currentCoverTrackKey()
+        val currentArt = coverBitmap?.takeIf { coverBitmapTrackKey == metadataTrackKey }
         val builder = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
             .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, currentAlbum)
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, currentDuration)
 
-        lastCoverUrl.takeIf { it.startsWith("https://") }?.let { artUri ->
-            builder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI, artUri)
-            builder.putString(MediaMetadataCompat.METADATA_KEY_ART_URI, artUri)
-            builder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON_URI, artUri)
+        if (currentArt != null) {
+            lastCoverUrl.takeIf { it.startsWith("https://") }?.let { artUri ->
+                builder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI, artUri)
+                builder.putString(MediaMetadataCompat.METADATA_KEY_ART_URI, artUri)
+                builder.putString(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON_URI, artUri)
+            }
         }
 
         // Keep the full-size bitmap for NotificationCompat.setLargeIcon(), but use a bounded copy
         // for MediaSession metadata so OEM media renderers stay under Binder transaction limits.
-        val sessionArt = coverBitmap?.let { bitmapForMediaSession(it) }
+        val sessionArt = currentArt?.let { bitmapForMediaSession(it) }
         sessionArt?.let { bmp ->
             builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bmp)
             builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, bmp)
@@ -1192,10 +1225,9 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                     }
                     coverBitmap = scaled
                     coverBitmapTrackKey = trackKey
+                    artworkPublishPending = false
                     Logger.i(ART_TAG, "bitmap applied ${scaled.width}x${scaled.height} track=${currentTitle.take(48)}")
-                    updateMetadata()
-                    showNotification()
-                    pushWidgetState(force = true)
+                    publishMediaSurfaces("art-ready")
                 }
             } catch (e: Exception) {
                 Logger.w(TAG, "Cover art load failed: ${e.message}")
@@ -1209,9 +1241,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                     ) {
                         coverBitmap = null
                         coverBitmapTrackKey = ""
-                        updateMetadata()
-                        showNotification()
-                        pushWidgetState(force = true)
+                        artworkPublishPending = false
+                        publishMediaSurfaces("load-fallback")
                     }
                 }
             } finally {
@@ -1221,6 +1252,10 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     }
 
     private fun showNotification() {
+        if (artworkPublishPending && currentTitle.isNotBlank()) {
+            Logger.i(ART_TAG, "notification deferred pending-art track=${currentTitle.take(48)}")
+            return
+        }
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(NOTIFICATION_ID, buildNotificationSafe())
     }
@@ -1317,10 +1352,11 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             .setStyle(buildMediaStyle(isShuffleAvailable))
         actions.forEach { builder.addAction(it) }
 
-        coverBitmap?.let { builder.setLargeIcon(it) }
+        val notificationArt = coverBitmap?.takeIf { coverBitmapTrackKey == currentCoverTrackKey() }
+        notificationArt?.let { builder.setLargeIcon(it) }
         Logger.i(
             ART_TAG,
-            "notification build largeIcon=${coverBitmap?.let { "${it.width}x${it.height}" } ?: "none"} track=${currentTitle.take(48)}"
+            "notification build largeIcon=${notificationArt?.let { "${it.width}x${it.height}" } ?: "none"} track=${currentTitle.take(48)} artKeyMatch=${coverBitmapTrackKey == currentCoverTrackKey()}"
         )
 
         return builder.build()
