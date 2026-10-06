@@ -275,14 +275,14 @@ public final class ProbeReport {
         try {
             CharSequence text = metadata.getText(key);
             if (text != null) {
-                return text.getClass().getSimpleName() + "(\\\"" + oneLine(text.toString()) + "\\")";
+                return text.getClass().getSimpleName() + "(\"" + oneLine(text.toString()) + "\")";
             }
         } catch (Throwable ignored) {}
 
         try {
             String value = metadata.getString(key);
             if (value != null) {
-                return "STRING(\\\"" + oneLine(value) + "\\")";
+                return "STRING(\"" + oneLine(value) + "\")";
             }
         } catch (Throwable ignored) {}
 
@@ -446,7 +446,7 @@ public final class ProbeReport {
                     + ", mediaUri=" + d.getMediaUri() + ")";
         }
         if (value instanceof CharSequence) {
-            return value.getClass().getSimpleName() + "(\\\"" + oneLine(value.toString()) + "\\")";
+            return value.getClass().getSimpleName() + "(\"" + oneLine(value.toString()) + "\")";
         }
         if (value instanceof int[]) return "int[]" + Arrays.toString((int[]) value);
         if (value instanceof long[]) return "long[]" + Arrays.toString((long[]) value);
