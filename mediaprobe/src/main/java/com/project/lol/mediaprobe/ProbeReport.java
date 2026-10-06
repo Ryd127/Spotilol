@@ -45,9 +45,7 @@ public final class ProbeReport {
             MediaMetadata.METADATA_KEY_TRACK_NUMBER,
             MediaMetadata.METADATA_KEY_NUM_TRACKS,
             MediaMetadata.METADATA_KEY_DISC_NUMBER,
-            MediaMetadata.METADATA_KEY_BT_FOLDER_TYPE,
-            MediaMetadata.METADATA_KEY_ADVERTISEMENT,
-            MediaMetadata.METADATA_KEY_DOWNLOAD_STATUS
+            MediaMetadata.METADATA_KEY_BT_FOLDER_TYPE
     ));
 
     private ProbeReport() {}
@@ -475,7 +473,7 @@ public final class ProbeReport {
         s.append("ICON(type=").append(iconTypeName(icon.getType())).append("/").append(icon.getType());
         try {
             if (icon.getType() == Icon.TYPE_BITMAP || icon.getType() == Icon.TYPE_ADAPTIVE_BITMAP) {
-                s.append(", ").append(describeBitmap(icon.getBitmap()));
+                s.append(", raw=").append(icon);
             } else if (icon.getType() == Icon.TYPE_RESOURCE) {
                 s.append(", pkg=").append(icon.getResPackage()).append(", resId=0x")
                         .append(Integer.toHexString(icon.getResId()));
