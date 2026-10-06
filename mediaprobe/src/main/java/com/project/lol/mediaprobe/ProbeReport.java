@@ -332,7 +332,7 @@ public final class ProbeReport {
 
     private static void dumpNotification(StringBuilder out, StatusBarNotification sbn) {
         line(out, "package=" + sbn.getPackageName());
-        line(out, "opPkg=" + sbn.getOpPkg());
+        line(out, "opPkg=" + (Build.VERSION.SDK_INT >= 29 ? sbn.getOpPkg() : "<API 29>"));
         line(out, "id=" + sbn.getId());
         line(out, "tag=" + sbn.getTag());
         line(out, "key=" + sbn.getKey());
