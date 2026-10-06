@@ -90,6 +90,12 @@
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:theme="@style/Theme.Spotilol" />
 
+        <provider
+            android:name=".service.SpotifyArtworkProvider"
+            android:authorities="com.spotify.mobile.android.mediaapi"
+            android:exported="true"
+            android:grantUriPermissions="true" />
+
         <service
             android:name=".service.MediaNotificationService"
             android:exported="true"

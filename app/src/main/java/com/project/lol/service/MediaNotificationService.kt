@@ -255,6 +255,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     private var isShuffleAvailable = true
     private var isFavorite = false
     private var coverBitmap: Bitmap? = null
+    private var coverContentUri: Uri? = null
+    private var coverContentUriTrackKey = ""
     private var currentTitle = ""
     private var currentArtist = ""
     private var currentAlbum = ""
@@ -660,6 +662,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             coverRequestSeq++
             coverBitmap = null
             coverBitmapTrackKey = ""
+            coverContentUri = null
+            coverContentUriTrackKey = ""
             lastCoverUrl = ""
         }
     }
@@ -668,6 +672,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         releasePlaybackLocksNow()
         coverRequestSeq++
         coverBitmapTrackKey = ""
+        coverContentUri = null
+        coverContentUriTrackKey = ""
         lastCoverUrl = ""
         if (instance === this) {
             // Detached MediaBrowser results must always be completed, even if the service goes
@@ -998,6 +1004,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                     ) {
                         coverBitmap = null
                         coverBitmapTrackKey = ""
+                        coverContentUri = null
+                        coverContentUriTrackKey = ""
                         artworkPublishPending = false
                         publishMediaSurfaces("no-art-fallback")
                     }
@@ -1142,6 +1150,13 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, currentAlbum)
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, currentDuration)
 
+        // Official Spotify exposes a resolver-readable content:// ALBUM_ART_URI alongside its
+        // bitmap artwork. Keep island9/10 bitmap behavior unchanged and add only that one URI path.
+        val contentArtUri = coverContentUri?.takeIf { coverContentUriTrackKey == metadataTrackKey }
+        contentArtUri?.let {
+            builder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI, it.toString())
+        }
+
         // Do not expose remote https artwork URIs to MediaSession. Some OEM consumers prefer
         // DISPLAY_ICON/URI over ART/ALBUM_ART and expect a ContentResolver-readable URI.
         // Give Vivo an explicit small bitmap in the highest-priority display-art key instead.
@@ -1168,9 +1183,11 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                 val description = echoedMetadata?.description
                 val descriptionIcon = description?.iconBitmap
                 val descriptionIconUri = description?.iconUri
+                val echoedAlbumArtUri = echoedMetadata
+                    ?.getString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI)
                 Logger.i(
                     ART_TAG,
-                    "MediaSession metadata set art=${sessionArt?.let { "${it.width}x${it.height}" } ?: "none"} display=${displayIcon?.let { "${it.width}x${it.height}" } ?: "none"} echoedArt=${echoed?.let { "${it.width}x${it.height}" } ?: "none"} echoedDisplay=${echoedDisplay?.let { "${it.width}x${it.height}" } ?: "none"} descIcon=${descriptionIcon?.let { "${it.width}x${it.height}" } ?: "none"} descUri=${descriptionIconUri ?: "none"} remoteUriKeys=off"
+                    "MediaSession metadata set art=${sessionArt?.let { "${it.width}x${it.height}" } ?: "none"} display=${displayIcon?.let { "${it.width}x${it.height}" } ?: "none"} contentUri=${contentArtUri ?: "none"} echoedArt=${echoed?.let { "${it.width}x${it.height}" } ?: "none"} echoedDisplay=${echoedDisplay?.let { "${it.width}x${it.height}" } ?: "none"} echoedAlbumUri=${echoedAlbumArtUri ?: "none"} descIcon=${descriptionIcon?.let { "${it.width}x${it.height}" } ?: "none"} descUri=${descriptionIconUri ?: "none"} remoteHttpUriKeys=off"
                 )
             } catch (e: Exception) {
                 Logger.e(ART_TAG, "MediaSession setMetadata failed: ${e.javaClass.simpleName}: ${e.message}", e)
@@ -1217,6 +1234,13 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                 val scaled = Bitmap.createScaledBitmap(raw, w, h, true)
                 Logger.i(ART_TAG, "decoded ${raw.width}x${raw.height} -> ${scaled.width}x${scaled.height}")
                 if (scaled != raw) raw.recycle()
+
+                val contentUri = runCatching {
+                    SpotifyArtworkProvider.publish(applicationContext, scaled, url)
+                }.onFailure {
+                    Logger.e(ART_TAG, "content artwork publish failed: ${it.javaClass.simpleName}: ${it.message}", it)
+                }.getOrNull()
+
                 mainHandler.post {
                     // A cover fetch can finish after another track has already won the race.
                     if (
@@ -1230,8 +1254,13 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                     }
                     coverBitmap = scaled
                     coverBitmapTrackKey = trackKey
+                    coverContentUri = contentUri
+                    coverContentUriTrackKey = if (contentUri != null) trackKey else ""
                     artworkPublishPending = false
-                    Logger.i(ART_TAG, "bitmap applied ${scaled.width}x${scaled.height} track=${currentTitle.take(48)}")
+                    Logger.i(
+                        ART_TAG,
+                        "bitmap applied ${scaled.width}x${scaled.height} contentUri=${contentUri ?: "none"} track=${currentTitle.take(48)}"
+                    )
                     publishMediaSurfaces("art-ready")
                 }
             } catch (e: Exception) {
@@ -1246,6 +1275,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                     ) {
                         coverBitmap = null
                         coverBitmapTrackKey = ""
+                        coverContentUri = null
+                        coverContentUriTrackKey = ""
                         artworkPublishPending = false
                         publishMediaSurfaces("load-fallback")
                     }
