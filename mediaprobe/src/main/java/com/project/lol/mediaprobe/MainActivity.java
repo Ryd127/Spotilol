@@ -1,6 +1,6 @@
 package com.project.lol.mediaprobe;
 
-import android.app.NotificationListenerService;
+import android.service.notification.NotificationListenerService;
 import android.app.NotificationManager;
 import android.content.ClipData;
 import android.content.ClipboardManager;
