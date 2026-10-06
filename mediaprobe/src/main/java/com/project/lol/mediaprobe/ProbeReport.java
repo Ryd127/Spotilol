@@ -215,7 +215,7 @@ public final class ProbeReport {
         line(out, "  activeQueueItemId=" + state.getActiveQueueItemId());
         line(out, "  actions=0x" + Long.toHexString(state.getActions()));
         line(out, "  actionsDecoded=" + decodeActions(state.getActions()));
-        line(out, "  errorCode=" + state.getErrorCode());
+
         line(out, "  errorMessage=" + safe(state.getErrorMessage()));
         line(out, "  extras:");
         dumpBundle(out, "    ", state.getExtras(), 0);
@@ -555,8 +555,7 @@ public final class ProbeReport {
         addAction(names, actions, PlaybackState.ACTION_PREPARE_FROM_MEDIA_ID, "PREPARE_FROM_MEDIA_ID");
         addAction(names, actions, PlaybackState.ACTION_PREPARE_FROM_SEARCH, "PREPARE_FROM_SEARCH");
         addAction(names, actions, PlaybackState.ACTION_PREPARE_FROM_URI, "PREPARE_FROM_URI");
-        addAction(names, actions, PlaybackState.ACTION_SET_REPEAT_MODE, "SET_REPEAT_MODE");
-        addAction(names, actions, PlaybackState.ACTION_SET_SHUFFLE_MODE, "SET_SHUFFLE_MODE");
+
         return names.toString();
     }
 
