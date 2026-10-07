@@ -1157,7 +1157,16 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             builder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI, it.toString())
         }
 
-        // Do not expose remote https artwork URIs to MediaSession. Some OEM consumers prefer
+        // Vivo's Spotify-specific controller reads this exact custom key and downloads the
+        // artwork itself. Publish only the HTTPS URL that produced the bitmap for this track.
+        val artHttpsUri = lastCoverUrl.takeIf {
+            currentArt != null && it.startsWith("https://", ignoreCase = true)
+        }
+        artHttpsUri?.let {
+            builder.putString("com.spotify.music.extra.ART_HTTPS_URI", it)
+        }
+
+        // Keep the existing island11 bitmap/content URI paths unchanged.
         // DISPLAY_ICON/URI over ART/ALBUM_ART and expect a ContentResolver-readable URI.
         // Give Vivo an explicit small bitmap in the highest-priority display-art key instead.
         val displayIcon = currentArt?.let { bitmapForMaxSide(it, MEDIA_SESSION_DISPLAY_ICON_MAX_PX) }
@@ -1185,9 +1194,11 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                 val descriptionIconUri = description?.iconUri
                 val echoedAlbumArtUri = echoedMetadata
                     ?.getString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI)
+                val echoedArtHttpsUri = echoedMetadata
+                    ?.getString("com.spotify.music.extra.ART_HTTPS_URI")
                 Logger.i(
                     ART_TAG,
-                    "MediaSession metadata set art=${sessionArt?.let { "${it.width}x${it.height}" } ?: "none"} display=${displayIcon?.let { "${it.width}x${it.height}" } ?: "none"} contentUri=${contentArtUri ?: "none"} echoedArt=${echoed?.let { "${it.width}x${it.height}" } ?: "none"} echoedDisplay=${echoedDisplay?.let { "${it.width}x${it.height}" } ?: "none"} echoedAlbumUri=${echoedAlbumArtUri ?: "none"} descIcon=${descriptionIcon?.let { "${it.width}x${it.height}" } ?: "none"} descUri=${descriptionIconUri ?: "none"} remoteHttpUriKeys=off"
+                    "MediaSession metadata set art=${sessionArt?.let { "${it.width}x${it.height}" } ?: "none"} display=${displayIcon?.let { "${it.width}x${it.height}" } ?: "none"} contentUri=${contentArtUri ?: "none"} artHttpsUri=${artHttpsUri?.take(120) ?: "none"} echoedArt=${echoed?.let { "${it.width}x${it.height}" } ?: "none"} echoedDisplay=${echoedDisplay?.let { "${it.width}x${it.height}" } ?: "none"} echoedAlbumUri=${echoedAlbumArtUri ?: "none"} echoedArtHttpsUri=${echoedArtHttpsUri?.take(120) ?: "none"} descIcon=${descriptionIcon?.let { "${it.width}x${it.height}" } ?: "none"} descUri=${descriptionIconUri ?: "none"}"
                 )
             } catch (e: Exception) {
                 Logger.e(ART_TAG, "MediaSession setMetadata failed: ${e.javaClass.simpleName}: ${e.message}", e)
