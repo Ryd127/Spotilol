@@ -101,7 +101,14 @@ object FetchOverride {
                                             window.__curTrackName = j.name || null;
                                             window.__curTrackArtist = (j.artist && j.artist.length) ? j.artist[0].name : null;
                                             window.__curTrackAlbum = (j.album) ? j.album.name : null;
-                                            if(cg && cg.length) window.__curTrackCover = 'https://i.scdn.co/image/' + cg[0].file_id;
+                                            window.__curTrackCover = (cg && cg.length)
+                                                ? 'https://i.scdn.co/image/' + cg[0].file_id
+                                                : null;
+                                            try {
+                                                window.dispatchEvent(new CustomEvent('spltrackmeta', {
+                                                    detail: { id: tid, cover: window.__curTrackCover }
+                                                }));
+                                            } catch(e){}
                                         }
                                     } catch(e){}
                                 });

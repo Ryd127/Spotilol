@@ -18,7 +18,7 @@
         android:name=".SpotilolApp"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="@string/app_name"
+        android:label="Spotify"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.Spotilol"
@@ -89,6 +89,12 @@
             android:screenOrientation="fullSensor"
             android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
             android:theme="@style/Theme.Spotilol" />
+
+        <provider
+            android:name=".service.SpotifyArtworkProvider"
+            android:authorities="com.spotify.mobile.android.mediaapi"
+            android:exported="true"
+            android:grantUriPermissions="true" />
 
         <service
             android:name=".service.MediaNotificationService"

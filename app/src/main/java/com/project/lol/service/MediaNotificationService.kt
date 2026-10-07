@@ -119,6 +119,13 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         private const val PLAYBACK_LOCK_GUARD_MS = 30_000L
         private const val PLAYBACK_WAKE_LOCK_TIMEOUT_MS = 120_000L
         private const val PLAYBACK_COMMAND_LOCK_TIMEOUT_MS = 15_000L
+        private const val COVER_TRANSITION_GRACE_MS = 1_200L
+        private const val MEDIA_SESSION_ART_MAX_PX = 256
+        private const val MEDIA_SESSION_DISPLAY_ICON_MAX_PX = 128
+        private const val ART_TAG = "media.art"
+        private const val COVER_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 " +
+                "(KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
 
         var webView: WebView? = null
         var instance: MediaNotificationService? = null
@@ -248,12 +255,16 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     private var isShuffleAvailable = true
     private var isFavorite = false
     private var coverBitmap: Bitmap? = null
+    private var coverContentUri: Uri? = null
+    private var coverContentUriTrackKey = ""
     private var currentTitle = ""
     private var currentArtist = ""
     private var currentAlbum = ""
     private var currentPosition: Long = 0L
     private var currentDuration: Long = 0L
     private var lastCoverUrl = ""
+    private var coverBitmapTrackKey = ""
+    private var coverRequestSeq = 0L
     private var lastActiveContextId: String? = null
     private var isRepeat = "false"
     private var wakeLock: PowerManager.WakeLock? = null
@@ -380,6 +391,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     private var lastMediaStatusJson: String? = null
     private var firstHeadsetCallback = true
     private var accentCache = 0
+    private var artworkPublishPending = false
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "PaletteSeed" || key == "MaterialYou") {
@@ -647,13 +659,21 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            coverRequestSeq++
             coverBitmap = null
+            coverBitmapTrackKey = ""
+            coverContentUri = null
+            coverContentUriTrackKey = ""
             lastCoverUrl = ""
         }
     }
 
     override fun onDestroy() {
         releasePlaybackLocksNow()
+        coverRequestSeq++
+        coverBitmapTrackKey = ""
+        coverContentUri = null
+        coverContentUriTrackKey = ""
         lastCoverUrl = ""
         if (instance === this) {
             // Detached MediaBrowser results must always be completed, even if the service goes
@@ -703,7 +723,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
 
     @Suppress("DEPRECATION")
     private fun setupMediaSession() {
-        mediaSession = MediaSessionCompat(this, "SpotilolSession").apply {
+        mediaSession = MediaSessionCompat(this, "Spotify").apply {
             setFlags(
                 MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
                 MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
@@ -940,14 +960,56 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             currentArtist = obj.optString("artist", "")
             currentAlbum = obj.optString("album", "")
             val coverUrl = obj.optString("cover", "")
+            val coverTrackKey = currentCoverTrackKey()
+            val hasCoverUrl = coverUrl.isNotEmpty() && coverUrl != "null"
+            Logger.i(
+                ART_TAG,
+                "status track=${currentTitle.take(48)} cover=${if (hasCoverUrl) coverUrl.take(140) else "<empty>"} bitmap=${coverBitmap?.let { "${it.width}x${it.height}" } ?: "none"}"
+            )
 
-            if (coverUrl.isNotEmpty() && coverUrl != "null" && coverUrl != lastCoverUrl) {
-                lastCoverUrl = coverUrl
-                coverBitmap = null
-                loadCoverArt(coverUrl)
-            } else if (coverUrl.isEmpty() || coverUrl == "null") {
+            if (hasCoverUrl) {
+                if (coverUrl == lastCoverUrl && coverBitmap != null && coverBitmapTrackKey == coverTrackKey) {
+                    // Same artwork (common inside one album): reuse the decoded bitmap immediately.
+                    coverRequestSeq++
+                    coverBitmapTrackKey = coverTrackKey
+                    artworkPublishPending = false
+                } else {
+                    // Do not publish a new track with the previous track's image (or with no image)
+                    // and then try to patch artwork in a second metadata event. Vivo deduplicates
+                    // artwork-only metadata changes once title/artist/duration are already equal.
+                    artworkPublishPending = true
+                    if (coverUrl != lastCoverUrl || coverBitmap == null || coverBitmapTrackKey != coverTrackKey) {
+                        val requestSeq = ++coverRequestSeq
+                        lastCoverUrl = coverUrl
+                        loadCoverArt(coverUrl, coverTrackKey, requestSeq)
+                    }
+                }
+            } else if (coverBitmap != null && coverBitmapTrackKey == coverTrackKey) {
+                // A transient DOM miss for the same track must not hide artwork that is already
+                // correct for this track.
+                artworkPublishPending = false
+            } else {
+                // Spotify often publishes title/artist a fraction of a second before its cover DOM
+                // is mounted. Hold externally-visible metadata until artwork appears or grace expires.
+                artworkPublishPending = true
                 lastCoverUrl = ""
-                coverBitmap = null
+                val requestSeq = ++coverRequestSeq
+                mainHandler.postDelayed({
+                    if (
+                        instance === this &&
+                        requestSeq == coverRequestSeq &&
+                        currentCoverTrackKey() == coverTrackKey &&
+                        lastCoverUrl.isEmpty() &&
+                        coverBitmapTrackKey != coverTrackKey
+                    ) {
+                        coverBitmap = null
+                        coverBitmapTrackKey = ""
+                        coverContentUri = null
+                        coverContentUriTrackKey = ""
+                        artworkPublishPending = false
+                        publishMediaSurfaces("no-art-fallback")
+                    }
+                }, COVER_TRANSITION_GRACE_MS)
             }
 
             isPlaying = obj.optBoolean("playing", false)
@@ -963,10 +1025,17 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             if (isPlaying) acquirePlaybackLocks() else schedulePlaybackLocksRelease()
 
             updatePlaybackState()
-            updateMetadata()
-            showNotification()
-            pushWidgetState(force = true)
-        } catch (_: Exception) {}
+            if (artworkPublishPending) {
+                Logger.i(
+                    ART_TAG,
+                    "metadata publish deferred reason=await-art track=${currentTitle.take(48)} artKeyMatch=${coverBitmapTrackKey == coverTrackKey}"
+                )
+            } else {
+                publishMediaSurfaces("status-ready")
+            }
+        } catch (e: Exception) {
+            Logger.e(ART_TAG, "media status apply failed: ${e.message}", e)
+        }
     }
 
     fun updatePlaybackPosition(position: Long) {
@@ -1054,51 +1123,175 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         }
     }
 
+    private fun currentCoverTrackKey(): String =
+        "$currentTitle\u0001$currentArtist\u0001$currentAlbum"
+
+    private fun publishMediaSurfaces(reason: String) {
+        Logger.i(
+            ART_TAG,
+            "metadata publish reason=$reason track=${currentTitle.take(48)} artKeyMatch=${coverBitmapTrackKey == currentCoverTrackKey()} bitmap=${coverBitmap?.let { "${it.width}x${it.height}" } ?: "none"}"
+        )
+        updateMetadata()
+        showNotification()
+        pushWidgetState(force = true)
+    }
+
     private fun updateMetadata() {
+        if (artworkPublishPending && currentTitle.isNotBlank()) {
+            Logger.i(ART_TAG, "MediaSession metadata deferred pending-art track=${currentTitle.take(48)}")
+            return
+        }
+
+        val metadataTrackKey = currentCoverTrackKey()
+        val currentArt = coverBitmap?.takeIf { coverBitmapTrackKey == metadataTrackKey }
         val builder = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
             .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, currentAlbum)
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, currentDuration)
-        coverBitmap?.let { bmp ->
+
+        // Official Spotify exposes a resolver-readable content:// ALBUM_ART_URI alongside its
+        // bitmap artwork. Keep island9/10 bitmap behavior unchanged and add only that one URI path.
+        val contentArtUri = coverContentUri?.takeIf { coverContentUriTrackKey == metadataTrackKey }
+        contentArtUri?.let {
+            builder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI, it.toString())
+        }
+
+        // Vivo's Spotify-specific controller reads this exact custom key and downloads the
+        // artwork itself. Publish only the HTTPS URL that produced the bitmap for this track.
+        val artHttpsUri = lastCoverUrl.takeIf {
+            currentArt != null && it.startsWith("https://", ignoreCase = true)
+        }
+        artHttpsUri?.let {
+            builder.putString("com.spotify.music.extra.ART_HTTPS_URI", it)
+        }
+
+        // Keep the existing island11 bitmap/content URI paths unchanged.
+        // DISPLAY_ICON/URI over ART/ALBUM_ART and expect a ContentResolver-readable URI.
+        // Give Vivo an explicit small bitmap in the highest-priority display-art key instead.
+        val displayIcon = currentArt?.let { bitmapForMaxSide(it, MEDIA_SESSION_DISPLAY_ICON_MAX_PX) }
+        displayIcon?.let { builder.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, it) }
+
+        // Keep the full-size bitmap for NotificationCompat.setLargeIcon(), but use a bounded copy
+        // for MediaSession metadata so OEM media renderers stay under Binder transaction limits.
+        val sessionArt = currentArt?.let { bitmapForMaxSide(it, MEDIA_SESSION_ART_MAX_PX) }
+        sessionArt?.let { bmp ->
             builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bmp)
             builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, bmp)
-            builder.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, bmp)
         }
+
         if (::mediaSession.isInitialized) {
-            try { mediaSession.setMetadata(builder.build()) } catch (_: Exception) {}
+            try {
+                val metadata = builder.build()
+                mediaSession.setMetadata(metadata)
+                val echoedMetadata = mediaSession.controller.metadata
+                val echoed = echoedMetadata
+                    ?.getBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART)
+                val echoedDisplay = echoedMetadata
+                    ?.getBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON)
+                val description = echoedMetadata?.description
+                val descriptionIcon = description?.iconBitmap
+                val descriptionIconUri = description?.iconUri
+                val echoedAlbumArtUri = echoedMetadata
+                    ?.getString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI)
+                val echoedArtHttpsUri = echoedMetadata
+                    ?.getString("com.spotify.music.extra.ART_HTTPS_URI")
+                Logger.i(
+                    ART_TAG,
+                    "MediaSession metadata set art=${sessionArt?.let { "${it.width}x${it.height}" } ?: "none"} display=${displayIcon?.let { "${it.width}x${it.height}" } ?: "none"} contentUri=${contentArtUri ?: "none"} artHttpsUri=${artHttpsUri?.take(120) ?: "none"} echoedArt=${echoed?.let { "${it.width}x${it.height}" } ?: "none"} echoedDisplay=${echoedDisplay?.let { "${it.width}x${it.height}" } ?: "none"} echoedAlbumUri=${echoedAlbumArtUri ?: "none"} echoedArtHttpsUri=${echoedArtHttpsUri?.take(120) ?: "none"} descIcon=${descriptionIcon?.let { "${it.width}x${it.height}" } ?: "none"} descUri=${descriptionIconUri ?: "none"}"
+                )
+            } catch (e: Exception) {
+                Logger.e(ART_TAG, "MediaSession setMetadata failed: ${e.javaClass.simpleName}: ${e.message}", e)
+            }
         }
     }
 
-    private fun loadCoverArt(url: String) {
+    private fun bitmapForMaxSide(source: Bitmap, maxPx: Int): Bitmap {
+        val maxSide = maxOf(source.width, source.height)
+        if (maxSide <= maxPx) return source
+        val scale = maxPx.toFloat() / maxSide.toFloat()
+        val width = (source.width * scale).toInt().coerceAtLeast(1)
+        val height = (source.height * scale).toInt().coerceAtLeast(1)
+        return Bitmap.createScaledBitmap(source, width, height, true)
+    }
+
+    private fun loadCoverArt(url: String, trackKey: String, requestSeq: Long) {
         Thread {
             var conn: HttpURLConnection? = null
             try {
                 conn = URL(url).openConnection() as HttpURLConnection
+                conn.instanceFollowRedirects = true
                 conn.connectTimeout = 5000
                 conn.readTimeout = 5000
+                conn.setRequestProperty("User-Agent", COVER_USER_AGENT)
+                conn.setRequestProperty("Referer", "https://open.spotify.com/")
+                conn.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
+                conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
                 conn.connect()
-                val raw = conn.inputStream.use { BitmapFactory.decodeStream(it) } ?: return@Thread
+                val code = conn.responseCode
+                Logger.i(
+                    ART_TAG,
+                    "HTTP $code type=${conn.contentType ?: "?"} length=${conn.contentLengthLong} url=${url.take(120)}"
+                )
+                if (code !in 200..299) {
+                    throw IllegalStateException("Cover HTTP $code")
+                }
+                val raw = conn.inputStream.use { BitmapFactory.decodeStream(it) }
+                    ?: throw IllegalStateException("Cover decode returned null")
                 val target = 512
                 val scale = min(target.toFloat() / raw.width, target.toFloat() / raw.height)
                 val w = (raw.width * scale).toInt().coerceAtLeast(1)
                 val h = (raw.height * scale).toInt().coerceAtLeast(1)
                 val scaled = Bitmap.createScaledBitmap(raw, w, h, true)
+                Logger.i(ART_TAG, "decoded ${raw.width}x${raw.height} -> ${scaled.width}x${scaled.height}")
                 if (scaled != raw) raw.recycle()
+
+                val contentUri = runCatching {
+                    SpotifyArtworkProvider.publish(applicationContext, scaled, url)
+                }.onFailure {
+                    Logger.e(ART_TAG, "content artwork publish failed: ${it.javaClass.simpleName}: ${it.message}", it)
+                }.getOrNull()
+
                 mainHandler.post {
-                    // A cover fetch can finish after stopSelf()/onDestroy(). Never allow that old
-                    // worker to resurrect a notification or widget from a dead service.
-                    if (instance !== this || url != lastCoverUrl) {
+                    // A cover fetch can finish after another track has already won the race.
+                    if (
+                        instance !== this ||
+                        requestSeq != coverRequestSeq ||
+                        url != lastCoverUrl ||
+                        trackKey != currentCoverTrackKey()
+                    ) {
                         if (!scaled.isRecycled) scaled.recycle()
                         return@post
                     }
                     coverBitmap = scaled
-                    updateMetadata()
-                    showNotification()
-                    pushWidgetState(force = true)
+                    coverBitmapTrackKey = trackKey
+                    coverContentUri = contentUri
+                    coverContentUriTrackKey = if (contentUri != null) trackKey else ""
+                    artworkPublishPending = false
+                    Logger.i(
+                        ART_TAG,
+                        "bitmap applied ${scaled.width}x${scaled.height} contentUri=${contentUri ?: "none"} track=${currentTitle.take(48)}"
+                    )
+                    publishMediaSurfaces("art-ready")
                 }
             } catch (e: Exception) {
                 Logger.w(TAG, "Cover art load failed: ${e.message}")
+                mainHandler.post {
+                    if (
+                        instance === this &&
+                        requestSeq == coverRequestSeq &&
+                        url == lastCoverUrl &&
+                        trackKey == currentCoverTrackKey() &&
+                        coverBitmapTrackKey != trackKey
+                    ) {
+                        coverBitmap = null
+                        coverBitmapTrackKey = ""
+                        coverContentUri = null
+                        coverContentUriTrackKey = ""
+                        artworkPublishPending = false
+                        publishMediaSurfaces("load-fallback")
+                    }
+                }
             } finally {
                 runCatching { conn?.disconnect() }
             }
@@ -1106,6 +1299,10 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     }
 
     private fun showNotification() {
+        if (artworkPublishPending && currentTitle.isNotBlank()) {
+            Logger.i(ART_TAG, "notification deferred pending-art track=${currentTitle.take(48)}")
+            return
+        }
         val nm = getSystemService(NotificationManager::class.java)
         nm.notify(NOTIFICATION_ID, buildNotificationSafe())
     }
@@ -1191,7 +1388,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle(currentTitle.ifEmpty { getString(R.string.app_name) })
             .setContentText(currentArtist)
-            .setSubText(getString(R.string.app_name))
+            .setSubText("Spotify")
             .setSmallIcon(R.drawable.ic_notification)
             .setContentIntent(contentIntent)
             .setOngoing(true)
@@ -1202,7 +1399,12 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             .setStyle(buildMediaStyle(isShuffleAvailable))
         actions.forEach { builder.addAction(it) }
 
-        coverBitmap?.let { builder.setLargeIcon(it) }
+        val notificationArt = coverBitmap?.takeIf { coverBitmapTrackKey == currentCoverTrackKey() }
+        notificationArt?.let { builder.setLargeIcon(it) }
+        Logger.i(
+            ART_TAG,
+            "notification build largeIcon=${notificationArt?.let { "${it.width}x${it.height}" } ?: "none"} track=${currentTitle.take(48)} artKeyMatch=${coverBitmapTrackKey == currentCoverTrackKey()}"
+        )
 
         return builder.build()
     }
