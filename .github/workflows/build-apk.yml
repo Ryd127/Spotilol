@@ -100,8 +100,8 @@ jobs:
           assert data.count('    implementation(libs.androidx.core.ktx)') == 1
           data = data.replace(
               '    implementation(libs.androidx.core.ktx)',
-              '    implementation(libs.androidx.datastore)\\n'
-              '    testImplementation("junit:junit:4.13.2")\\n'
+              '    implementation(libs.androidx.datastore)\n'
+              '    testImplementation("junit:junit:4.13.2")\n'
               '    implementation(libs.androidx.core.ktx)', 1)
           gradle.write_text(data)
           catalog = Path('gradle/libs.versions.toml')
@@ -110,10 +110,10 @@ jobs:
           assert vc.count('[libraries]') == 1
           assert vc.count('composeBom = "2026.06.01"') == 1
           vc = vc.replace('composeBom = "2026.06.01"', 'composeBom = "2026.09.00"', 1)
-          vc = vc.replace('glance = "1.2.0"', 'glance = "1.2.0"\\ndatastore = "1.2.1"', 1)
+          vc = vc.replace('glance = "1.2.0"', 'glance = "1.2.0"\ndatastore = "1.2.1"', 1)
           vc = vc.replace(
               '[libraries]',
-              '[libraries]\\nandroidx-datastore = { group = "androidx.datastore", name = "datastore", version.ref = "datastore" }', 1)
+              '[libraries]\nandroidx-datastore = { group = "androidx.datastore", name = "datastore", version.ref = "datastore" }', 1)
           catalog.write_text(vc)
           assert Path('app/src/main/cpp/CMakeLists.txt').is_file()
           assert 'max-page-size=16384' in Path('lame/CMakeLists.txt').read_text()
