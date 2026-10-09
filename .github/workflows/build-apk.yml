@@ -129,6 +129,7 @@ jobs:
           python3 ci/hybrid/guard_optional_firebase.py
           python3 ci/hybrid/apply_playback_stability.py
           python3 ci/hybrid/optimize_ui_sync.py
+          python3 ci/hybrid/throttle_progress_bridge.py
 
       - name: Verify Gradle wrapper integrity
         shell: bash
