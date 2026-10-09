@@ -127,6 +127,7 @@ jobs:
           PY
           # Firebase is optional for the Vivo test package ID.
           python3 ci/hybrid/guard_optional_firebase.py
+          python3 ci/hybrid/apply_playback_stability.py
 
       - name: Verify Gradle wrapper integrity
         shell: bash
