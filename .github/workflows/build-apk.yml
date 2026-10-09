@@ -81,20 +81,20 @@ jobs:
             assert data.count(entry)==1,entry
             data=data.replace(entry,'',1)
           native_configuration = '''    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
-    packaging {
-        jniLibs {
-            pickFirsts += setOf(
-                "**/libandroidx.graphics.path.so",
-                "**/libdatastore_shared_counter.so"
-            )
-        }
-    }
-'''
+                  cmake {
+                      path = file("src/main/cpp/CMakeLists.txt")
+                      version = "3.22.1"
+                  }
+              }
+              packaging {
+                  jniLibs {
+                      pickFirsts += setOf(
+                          "**/libandroidx.graphics.path.so",
+                          "**/libdatastore_shared_counter.so"
+                      )
+                  }
+              }
+          '''
           assert data.count('    buildFeatures {') == 1
           data = data.replace('    buildFeatures {', native_configuration + '    buildFeatures {', 1)
           assert data.count('    implementation(libs.androidx.core.ktx)') == 1
