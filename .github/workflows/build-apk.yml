@@ -125,6 +125,8 @@ jobs:
           assert 'currentArtUri: Uri?' in media
           print('Integrated upstream 1.2.0 + Vivo/artwork/performance patch')
           PY
+          # Firebase is optional for the Vivo test package ID.
+          python3 ci/hybrid/guard_optional_firebase.py
 
       - name: Verify Gradle wrapper integrity
         shell: bash
