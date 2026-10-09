@@ -3,7 +3,7 @@ name: Build Spotilol APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'feature/upstream-1.2.0-integration' ]
     tags: [ 'v*' ]
   pull_request:
 
@@ -26,6 +26,66 @@ jobs:
     steps:
       - name: Checkout sources
         uses: actions/checkout@v7
+
+      - name: Checkout pinned upstream Spotilol 1.2.0
+        uses: actions/checkout@v7
+        with:
+          repository: lyssadev/Spotilol
+          ref: a62e55dee71ecf558136d52958d89fac5ed6599b
+          path: pinned-upstream-120
+          persist-credentials: false
+
+      - name: Apply Vivo hybrid compatibility overlay
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git -C pinned-upstream-120 rev-parse HEAD)" == "a62e55dee71ecf558136d52958d89fac5ed6599b" ]]
+          mkdir -p ci-logs
+          echo '8f688b1bdaaf0f50a49d809f24ff74559d503dd0606b714622c897b79669a211  ci/hybrid/spotilol-1.2.0-vivo-hybrid1.patch.br' | sha256sum --status -c -
+          cp app/src/main/java/com/project/lol/service/SpotifyArtworkProvider.kt "$RUNNER_TEMP/SpotifyArtworkProvider.kt"
+          cp app/proguard-rules.pro "$RUNNER_TEMP/stable-proguard-rules.pro"
+          cp gradle/wrapper/gradle-wrapper.properties "$RUNNER_TEMP/gradle-wrapper.properties"
+          mv pinned-upstream-120 "$RUNNER_TEMP/spotilol-upstream-120"
+          rsync -a --delete \
+            --exclude='.git/' --exclude='.github/' --exclude='ci/' \
+            --exclude='ci-logs/' --exclude='scripts/' \
+            --exclude='app/src/test/' \
+            --exclude='app/src/main/java/com/project/lol/webview/TrustedOrigins.kt' \
+            "$RUNNER_TEMP/spotilol-upstream-120/" ./
+          cp "$RUNNER_TEMP/gradle-wrapper.properties" gradle/wrapper/gradle-wrapper.properties
+          mkdir -p app/src/main/java/com/project/lol/service
+          cp "$RUNNER_TEMP/SpotifyArtworkProvider.kt" app/src/main/java/com/project/lol/service/
+          cat "$RUNNER_TEMP/stable-proguard-rules.pro" >> app/proguard-rules.pro
+          python3 - <<'PY'
+          import subprocess
+          checks={
+            'app/build.gradle.kts':'a34feb54790191b6c7aea80ce79cd5acfdcacd9b',
+            'app/src/main/java/com/project/lol/service/MediaNotificationService.kt':'21ce0a0524cbae63fe8937f4e308ac6fdea2b17e',
+            'app/src/main/java/com/project/lol/bridge/OriginScopedBridge.kt':'3afc871a426e9f29117147d6fb640df0a35c3bb1'
+          }
+          for path,expected in checks.items():
+            actual=subprocess.check_output(['git','hash-object',path],text=True).strip()
+            assert actual==expected,(path,actual,expected)
+          PY
+          node -e 'const fs=require("fs"),z=require("zlib");fs.writeFileSync("/tmp/spotilol-hybrid1.patch",z.brotliDecompressSync(fs.readFileSync("ci/hybrid/spotilol-1.2.0-vivo-hybrid1.patch.br")))'
+          git apply --check /tmp/spotilol-hybrid1.patch
+          git apply /tmp/spotilol-hybrid1.patch
+          # The public upstream archive does not contain credentials for Firebase Gradle tasks.
+          python3 - <<'PY'
+          from pathlib import Path
+          gradle=Path('app/build.gradle.kts')
+          data=gradle.read_text()
+          for entry in ['    id("com.google.gms.google-services")\n', '    id("com.google.firebase.crashlytics")\n']:
+            assert data.count(entry)==1,entry
+            data=data.replace(entry,'',1)
+          gradle.write_text(data)
+          media=Path('app/src/main/java/com/project/lol/service/MediaNotificationService.kt').read_text()
+          assert media.count('fun updateFromMediaStatus(json: String)')==1
+          assert 'com.spotify.music.extra.ART_HTTPS_URI' in media
+          assert 'lastMetadataKey' in media
+          assert 'currentArtUri: Uri?' in media
+          print('Integrated upstream 1.2.0 + Vivo/artwork/performance patch')
+          PY
 
       - name: Verify Gradle wrapper integrity
         shell: bash
@@ -134,14 +194,14 @@ jobs:
             done
           } 2>&1 | tee ci-logs/release-dependencies.log
 
-      - name: Analyze release R8 configuration
+      - name: Inspect release R8 dependencies
         id: r8_audit
         continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p ci-logs
-          ./gradlew --no-daemon --stacktrace --warning-mode all --console=plain :app:analyzeReleaseR8Config \
+          ./gradlew --no-daemon --stacktrace --warning-mode all --console=plain :app:dependencies --configuration releaseRuntimeClasspath \
             2>&1 | tee ci-logs/r8-config-analyzer.log
 
       - name: Run trusted-origin unit tests
