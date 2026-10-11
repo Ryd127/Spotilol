@@ -85,7 +85,7 @@ import compose.icons.tablericons.ArrowLeft
 import compose.icons.tablericons.ChevronDown
 import compose.icons.tablericons.DotsVertical
 import compose.icons.tablericons.Download
-import compose.icons.tablericons.ArrowsShuffle
+import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Repeat
 import compose.icons.tablericons.Camera
 import java.net.HttpURLConnection
@@ -427,7 +427,7 @@ fun NativeMobileShell(
                                         ToolIcon(TablerIcons.Download, "Скачать", onOpenWeb, grey)
                                         ToolIcon(TablerIcons.DotsVertical, "Меню", onOpenWeb, grey)
                                         Spacer(Modifier.weight(1f))
-                                        ToolIcon(TablerIcons.ArrowsShuffle, "Перемешать", onOpenWeb, grey)
+                                        ToolIcon(TablerIcons.ArrowsSort, "Перемешать", onOpenWeb, grey)
                                         Box(Modifier.size(55.dp).clip(CircleShape).background(green)
                                             .clickable { onToggle() }, contentAlignment = Alignment.Center) {
                                             Icon(if(track.playing) TablerIcons.PlayerPause else TablerIcons.PlayerPlay,
@@ -655,7 +655,7 @@ fun NativeMobileShell(
                     Spacer(Modifier.height(20.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
-                        ToolIcon(TablerIcons.ArrowsShuffle, "Перемешать", onOpenWeb, white, 26)
+                        ToolIcon(TablerIcons.ArrowsSort, "Перемешать", onOpenWeb, white, 26)
                         ToolIcon(TablerIcons.PlayerSkipBack, "Предыдущий", onPrevious, white, 32)
                         Box(Modifier.size(68.dp).clip(CircleShape).background(white)
                             .clickable(onClick = onToggle), contentAlignment = Alignment.Center) {
