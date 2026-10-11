@@ -11,6 +11,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -238,10 +239,17 @@ private fun Avatar(onClick: () -> Unit) {
 }
 @Composable
 private fun Pill(label: String, checked: Boolean, onClick: () -> Unit) {
-    Box(Modifier.clip(CircleShape)
-        .background(if (checked) green else Color(0xFF282828))
+    val fill by animateColorAsState(
+        targetValue = if (checked) green else Color(0xFF282828),
+        animationSpec = tween(160), label = "chipFill"
+    )
+    val ink by animateColorAsState(
+        targetValue = if (checked) Color.Black else white,
+        animationSpec = tween(160), label = "chipText"
+    )
+    Box(Modifier.clip(CircleShape).background(fill)
         .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 11.dp)) {
-        Text(label, color = if (checked) Color.Black else white, fontSize = 13.sp, maxLines = 1)
+        Text(label, color = ink, fontSize = 13.sp, maxLines = 1)
     }
 }
 private fun progress(track: NativeMiniTrack): Float =
@@ -542,8 +550,10 @@ fun NativeMobileShell(
                     Cover(track.cover, Modifier.size(51.dp))
                     Column(Modifier.weight(1f).clickable { nowPlaying = true }
                         .padding(start = 10.dp)) {
-                        Text(track.title, color = white, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Crossfade(track.title, animationSpec = tween(170), label = "miniTrackTitle") { title ->
+                            Text(title, color = white, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
                         Text(track.artist, color = white.copy(alpha = .70f), fontSize = 11.sp,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -617,9 +627,11 @@ fun NativeMobileShell(
                     Spacer(Modifier.weight(.6f))
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text(track.title, color = white, fontSize = 22.sp,
-                                fontWeight = FontWeight.Bold, maxLines = 2,
-                                overflow = TextOverflow.Ellipsis)
+                            Crossfade(track.title, animationSpec = tween(190), label = "nowPlayingTitle") { name ->
+                                Text(name, color = white, fontSize = 22.sp,
+                                    fontWeight = FontWeight.Bold, maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis)
+                            }
                             Text(track.artist, color = white.copy(alpha = .72f), fontSize = 15.sp,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
