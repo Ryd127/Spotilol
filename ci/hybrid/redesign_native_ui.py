@@ -85,6 +85,44 @@ once(main,
                                         if (nativeMobileBrowseState.value.ready)
                                             nativeMobileBrowseState.value = MobileBrowseState()""")
 
+# Advanced WebView-only actions open a temporary fallback, NOT a permanent
+# setting switch. The user can return to native UI immediately from the overlay.
+once(main,
+    "    private val nativeMobileSessionReady = mutableStateOf(false)",
+    "    private val nativeMobileSessionReady = mutableStateOf(false)\n"
+    "    private val nativeWebFallbackState = mutableStateOf(false)")
+once(main,
+    "nativeMobileEnabled && serviceEnabled && nativeMobileSessionReady.value && webViewError.value == null",
+    "nativeMobileEnabled && !nativeWebFallbackState.value && serviceEnabled && nativeMobileSessionReady.value && webViewError.value == null")
+once(main,
+    """                                    onOpenWeb = {
+                                        nativeMobileEnabledState.value = false
+                                        prefs.edit().putBoolean("NativeMobileUI", false).apply()
+                                    }""",
+    """                                    onOpenWeb = {
+                                        nativeWebFallbackState.value = true
+                                    }""")
+once(main,
+    """                            if (showDialog) {
+                                SleepTimerDialog(""",
+    """                            if (nativeWebFallbackState.value && nativeMobileEnabledState.value &&
+                                serviceEnabled && !pipFilling) {
+                                Box(
+                                    Modifier.align(Alignment.BottomEnd)
+                                        .padding(end = 14.dp, bottom = 110.dp)
+                                        .clip(RoundedCornerShape(24.dp))
+                                        .background(Color(0xFF1ED760))
+                                        .clickable { nativeWebFallbackState.value = false }
+                                        .padding(horizontal = 15.dp, vertical = 12.dp)
+                                ) {
+                                    Text("↩ Вернуться в приложение",
+                                        color = Color.Black, fontWeight = FontWeight.Bold)
+                                }
+                            }
+
+                            if (showDialog) {
+                                SleepTimerDialog(""")
+
 gradle=Path("app/build.gradle.kts")
 g=gradle.read_text(encoding="utf-8")
 for before,after in [
