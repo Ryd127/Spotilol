@@ -133,5 +133,5 @@ for before,after in [
     g=g.replace(before,after,1)
 gradle.write_text(g,encoding="utf-8")
 assert "nativeMobileSessionReady.value" in (root/main).read_text(encoding="utf-8")
-assert "redesign11" in (root/"ui/components/NativeMobileJs.kt").read_text(encoding="utf-8")
+assert "splNativeUiRevision" in (root/"ui/components/NativeMobileJs.kt").read_text(encoding="utf-8")
 print("Redesign11: persistent Compose session, bridge reattach, exact-screen native redesign; versionCode 41")
