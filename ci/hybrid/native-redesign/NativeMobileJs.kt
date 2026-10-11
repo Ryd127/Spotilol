@@ -7,9 +7,9 @@ package com.project.lol.ui.components
 object NativeMobileJs {
     const val INSTALL = """
       (function(){
-        if(window.splNativeUiRevision==='redesign11')return;
-        window.splNativeUiRevision='redesign11';
-        var lastLibrary=null, libPending=false, libLastTry=0;
+        if(window.splNativeUiRevision==='redesign13')return;
+        window.splNativeUiRevision='redesign13';
+        var lastLibrary=null, libPending=false, libLastTry=0, knownImages=Object.create(null);
         function clean(s,n){return String(s||'').replace(/\s+/g,' ').trim().slice(0,n||170);}
         function allowedPath(h){
           try{
@@ -21,10 +21,44 @@ object NativeMobileJs {
         }
         function image(el){
           if(!el)return '';
-          var node=(el.matches&&el.matches('img'))?el:el.querySelector('img');
-          if(!node)return '';
-          var val=clean(node.currentSrc||node.getAttribute('src')||node.src,800);
-          return /^https:\/\//.test(val)?val:'';
+          // Spotify Web uses both IMG tags and CSS backgrounds for browse tiles.
+          // A lazy IMG often has no src until it scrolls into the viewport.
+          var nodes=el.matches&&el.matches('img,source')?[el]:el.querySelectorAll('img,source');
+          function normalize(value){
+            value=clean(value,800);
+            if(/^spotify:image:[0-9a-f]{32,}$/i.test(value))
+              return 'https://i.scdn.co/image/'+value.slice(14);
+            if(!/^https:\/\//i.test(value))return '';
+            try{
+              var host=new URL(value).hostname.toLowerCase();
+              if(host==='scdn.co'||host.endsWith('.scdn.co')||
+                 host==='spotifycdn.com'||host.endsWith('.spotifycdn.com'))return value;
+            }catch(e){}
+            return '';
+          }
+          for(var i=0;i<nodes.length&&i<12;i++){
+            var node=nodes[i];
+            var src=normalize(node.currentSrc||node.getAttribute('src')||node.getAttribute('data-src')||node.src);
+            if(src)return src;
+            var srcset=node.getAttribute('srcset')||node.getAttribute('data-srcset')||'';
+            var match=srcset.match(/https:\/\/[^,\s]+/);
+            if(match&&(src=normalize(match[0])))return src;
+          }
+          var elements=[el];
+          if(el.querySelectorAll){
+            var styled=el.querySelectorAll('[style*="background"],[data-testid*="image"],[class*="image"],[class*="Image"]');
+            for(var j=0;j<styled.length&&j<14;j++)elements.push(styled[j]);
+          }
+          for(var k=0;k<elements.length;k++){
+            var e=elements[k];
+            var background=(e.style&&e.style.backgroundImage)||'';
+            if(!background){
+              try{background=getComputedStyle(e).backgroundImage||'';}catch(ex){}
+            }
+            var m=background.match(/url\(["']?([^"'\)]+)["']?\)/);
+            if(m){var url=normalize(m[1]);if(url)return url;}
+          }
+          return '';
         }
         function closestCard(a){
           // Never choose a whole shelf/section: that repeated the first artist's
@@ -47,6 +81,17 @@ object NativeMobileJs {
           }
           if(!label)return null;
           var type=p.split('/')[1],img=image(a)||image(card);
+          // Never climb into a shelf with many links: that would apply one
+          // artist/playlist picture to every unrelated card.
+          function localCover(parent){
+            if(!parent||!parent.querySelectorAll)return '';
+            return parent.querySelectorAll('a[href]').length<=2?image(parent):'';
+          }
+          if(!img&&a.parentElement&&a.parentElement!==card)img=localCover(a.parentElement);
+          if(!img&&a.parentElement&&a.parentElement.parentElement&&a.parentElement.parentElement!==card)
+            img=localCover(a.parentElement.parentElement);
+          if(!img&&knownImages[p])img=knownImages[p];
+          if(img)knownImages[p]=img;
           var subtitle='';
           var sub=card.querySelector('[data-testid="card-subtitle"],[data-testid="card-description"]');
           if(sub)subtitle=clean(sub.textContent,130);
@@ -131,12 +176,25 @@ object NativeMobileJs {
           var path=location.pathname;
           var lib=library();
           if(!lib.length&&!libPending)window.splNativeLoadLibrary();
+          // Prefer exact Spotify entity artwork over blank/lazy web tiles.
+          for(var l=0;l<lib.length;l++){
+            if(lib[l].image)knownImages[lib[l].path]=lib[l].image;
+          }
           var h=root.querySelector('h1');
           var owner=root.querySelector('[data-testid="creator-link"],[data-testid="playlist-owner"],[data-testid="entity-subtitle"] a[href*="/user/"]');
           var creator=clean(owner&&owner.textContent,100);
           var stats=root.querySelector('[data-testid="entity-subtitle"],[data-testid="playlist-description"]');
           var meta=clean(stats&&stats.textContent,170);
           var rows=trackRows(root),cards=uniqueCards(root,100,path.startsWith('/search/'));
+          function enrich(items){
+            items.forEach(function(item){
+              var cover=knownImages[item.path]||'';
+              if(!item.image&&cover)item.image=cover;
+              if(item.image)knownImages[item.path]=item.image;
+            });
+            return items;
+          }
+          enrich(rows);enrich(cards);
           var showRows=(path.startsWith('/album/')||path.startsWith('/playlist/')||path.startsWith('/collection/'));
           var firstCover='';
           var mainCover=root.querySelector('[data-testid="entity-image"],[data-testid="playlist-image"],main header img,main h1 + img');
@@ -154,7 +212,9 @@ object NativeMobileJs {
             cover:firstCover,creator:creator,meta:meta,
             items:showRows&&rows.length?rows:cards,
             library:lib,
-            sections:path==='/'?sections(root):[],
+            sections:path==='/'?sections(root).map(function(group){
+              group.items=enrich(group.items);return group;
+            }):[],
             loadingLibrary:libPending,error:''
           });
         };

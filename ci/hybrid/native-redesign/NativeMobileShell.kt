@@ -56,6 +56,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
+import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -187,16 +189,38 @@ private object ArtCache {
     }
 }
 @Composable
-private fun Cover(url: String, modifier: Modifier = Modifier, round: Boolean = false) {
-    val bitmap by produceState<Bitmap?>(null, url) { value = ArtCache.load(url) }
+private fun Cover(
+    url: String, modifier: Modifier = Modifier,
+    round: Boolean = false, isLiked: Boolean = false
+) {
+    val bitmap by produceState<Bitmap?>(null, url, isLiked) {
+        value = if (isLiked) null else ArtCache.load(url)
+    }
     val shape = if (round) CircleShape else RoundedCornerShape(5.dp)
     Box(modifier.clip(shape).background(Color(0xFF303030)), contentAlignment = Alignment.Center) {
-        Crossfade(targetState = bitmap, animationSpec = tween(230), label = "art") { art ->
-            if (art != null) Image(art.asImageBitmap(), contentDescription = null,
-                modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            else Text("♫", color = grey, fontSize = 25.sp)
+        if (isLiked) {
+            Box(Modifier.fillMaxSize().background(Brush.linearGradient(
+                listOf(Color(0xFF4320A7), Color(0xFF806AE3), Color(0xFFA8E4D4))
+            )), contentAlignment = Alignment.Center) {
+                Text("♥", color = white, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+            }
+        } else {
+            Crossfade(targetState = bitmap, animationSpec = tween(230), label = "art") { art ->
+                if (art != null) Image(art.asImageBitmap(), contentDescription = null,
+                    modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                else Box(Modifier.fillMaxSize().background(Brush.linearGradient(
+                    listOf(Color(0xFF333333), Color(0xFF242424))
+                )), contentAlignment = Alignment.Center) {
+                    Text("♫", color = grey, fontSize = 23.sp)
+                }
+            }
         }
     }
+}
+
+private fun artworkFor(item: MobileBrowseItem, library: List<MobileBrowseItem>): String {
+    if (item.image.isNotBlank()) return item.image
+    return library.firstOrNull { it.path == item.path && it.image.isNotBlank() }?.image.orEmpty()
 }
 @Composable
 private fun CoverTone(url: String): Color {
@@ -204,14 +228,25 @@ private fun CoverTone(url: String): Color {
     return remember(art) {
         if (art == null) Color(0xFF47313D)
         else runCatching {
-            val w = art!!.width; val h = art!!.height
-            var r = 0L; var g = 0L; var b = 0L; var count = 0
+            val img = art!!
+            // Prefer a saturated cover colour over the grey average of a collage.
+            val hsv = FloatArray(3)
+            var best = floatArrayOf(280f, .42f, .35f)
+            var score = -1f
             for (y in 1..4) for (x in 1..4) {
-                val pix = art!!.getPixel(w * x / 5, h * y / 5)
-                r += android.graphics.Color.red(pix); g += android.graphics.Color.green(pix)
-                b += android.graphics.Color.blue(pix); count++
+                android.graphics.Color.colorToHSV(
+                    img.getPixel(img.width * x / 5, img.height * y / 5), hsv
+                )
+                val next = hsv[1] * (.4f + hsv[2]) -
+                    kotlin.math.abs(hsv[2] - .55f) * .14f
+                if (next > score) {
+                    score = next
+                    best = floatArrayOf(hsv[0], hsv[1].coerceAtLeast(.35f), hsv[2])
+                }
             }
-            Color((r / count).toInt(), (g / count).toInt(), (b / count).toInt())
+            best[1] = best[1].coerceIn(.34f, .76f)
+            best[2] = best[2].coerceIn(.24f, .35f)
+            Color(android.graphics.Color.HSVToColor(best))
         }.getOrDefault(Color(0xFF47313D))
     }
 }
@@ -406,7 +441,7 @@ fun NativeMobileShell(
                                     Brush.verticalGradient(listOf(detailTone.copy(alpha = .80f), bg))
                                 ).padding(horizontal = 17.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                     Spacer(Modifier.height(8.dp))
-                                    Cover(artUrl, Modifier.size(235.dp))
+                                    Cover(artUrl, Modifier.size(235.dp), isLiked = browse.path == "/collection/tracks")
                                     Spacer(Modifier.height(19.dp))
                                     Text(browse.title.ifBlank { "Плейлист" }, color = white, fontSize = 26.sp,
                                         fontWeight = FontWeight.ExtraBold, modifier = Modifier.fillMaxWidth())
@@ -469,7 +504,50 @@ fun NativeMobileShell(
                                     color = white, fontWeight = FontWeight.Bold, fontSize = 22.sp,
                                     modifier = Modifier.padding(vertical = 18.dp)) }
                                 val tags = browse.items.filter { it.kind == "genre" || it.kind == "section" }
-                                items(tags.chunked(2)) { group ->
+                                if (tags.isNotEmpty()) {
+                                    item {
+                                        LazyRow(
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                            contentPadding = PaddingValues(end = 12.dp)
+                                        ) {
+                                            items(tags.take(3), key = { it.path }) { entry ->
+                                                Box(
+                                                    Modifier.width(144.dp).height(181.dp)
+                                                        .clip(RoundedCornerShape(10.dp))
+                                                        .background(Color(0xFF282828))
+                                                        .clickable { clickItem(entry) }
+                                                ) {
+                                                    if (entry.image.isNotBlank()) {
+                                                        Cover(entry.image, Modifier.fillMaxSize())
+                                                    } else {
+                                                        Box(Modifier.fillMaxSize().background(
+                                                            Brush.linearGradient(listOf(
+                                                                Color(0xFF58406D), Color(0xFF162828)
+                                                            ))
+                                                        ))
+                                                    }
+                                                    Box(Modifier.fillMaxSize().background(
+                                                        Brush.verticalGradient(listOf(
+                                                            Color.Transparent, Color.Black.copy(alpha = .68f)
+                                                        ))
+                                                    ))
+                                                    Text(
+                                                        entry.title, color = white,
+                                                        fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                                                        maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                                        modifier = Modifier.align(Alignment.BottomStart)
+                                                            .padding(11.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Spacer(Modifier.height(23.dp))
+                                        Text("Все категории", color = white, fontSize = 21.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(bottom = 15.dp))
+                                    }
+                                }
+                                items(tags.drop(3).chunked(2)) { group ->
                                     Row(Modifier.fillMaxWidth().padding(bottom = 12.dp),
                                         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                         group.forEachIndexed { index, entry ->
@@ -484,8 +562,21 @@ fun NativeMobileShell(
                                                 Text(entry.title, color = white, fontWeight = FontWeight.Bold,
                                                     fontSize = 16.sp, modifier = Modifier.padding(12.dp).fillMaxWidth(.85f),
                                                     maxLines = 2, overflow = TextOverflow.Ellipsis)
-                                                Cover(entry.image,
-                                                    Modifier.size(78.dp).align(Alignment.BottomEnd))
+                                                if (entry.image.isNotBlank()) {
+                                                    Cover(entry.image,
+                                                        Modifier.size(88.dp).align(Alignment.BottomEnd)
+                                                            .offset(x = 12.dp, y = 12.dp).rotate(-15f))
+                                                } else {
+                                                    Box(
+                                                        Modifier.size(75.dp).align(Alignment.BottomEnd)
+                                                            .offset(x = 20.dp, y = 17.dp).rotate(-15f)
+                                                            .clip(RoundedCornerShape(12.dp))
+                                                            .background(Brush.linearGradient(
+                                                                listOf(white.copy(alpha = .22f),
+                                                                    Color.Black.copy(alpha = .13f))
+                                                            ))
+                                                    )
+                                                }
                                             }
                                         }
                                         if (group.size == 1) Spacer(Modifier.weight(1f))
@@ -513,7 +604,8 @@ fun NativeMobileShell(
                                                 .clip(RoundedCornerShape(7.dp))
                                                 .background(Color(0xFF292929)).clickable { clickItem(item) },
                                                 verticalAlignment = Alignment.CenterVertically) {
-                                                Cover(item.image, Modifier.size(57.dp))
+                                                Cover(artworkFor(item, browse.library), Modifier.size(57.dp),
+                                                    isLiked = item.path == "/collection/tracks")
                                                 Text(item.title, color = white, fontSize = 12.sp,
                                                     fontWeight = FontWeight.Bold, maxLines = 2,
                                                     overflow = TextOverflow.Ellipsis,
@@ -526,10 +618,11 @@ fun NativeMobileShell(
                             }
                             if (browseSections.isEmpty() && shortcuts.isNotEmpty()) {
                                 item { Shelf("Рекомендуем тебе", browse.items.drop(8).take(15),
-                                    onClick = { clickItem(it) }) }
+                                    library = browse.library, onClick = { clickItem(it) }) }
                             }
                             items(browseSections) { section ->
-                                Shelf(section.title, section.items, onClick = { clickItem(it) })
+                                Shelf(section.title, section.items,
+                                    library = browse.library, onClick = { clickItem(it) })
                             }
                             if (browse.items.isEmpty() && browse.library.isEmpty()) {
                                 item { Text("Подгружаем рекомендации…",
@@ -695,9 +788,10 @@ private fun TrackRow(item: MobileBrowseItem, onClick: () -> Unit, onMore: () -> 
 }
 @Composable
 private fun LibraryRow(item: MobileBrowseItem, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(81.dp).clickable(onClick = onClick),
+    Row(Modifier.fillMaxWidth().height(73.dp).clickable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically) {
-        Cover(item.image, Modifier.size(63.dp), item.kind == "artist")
+        Cover(item.image, Modifier.size(59.dp), item.kind == "artist",
+            isLiked = item.path == "/collection/tracks")
         Column(Modifier.weight(1f).padding(start = 13.dp)) {
             Text(item.title, color = white, fontSize = 16.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
@@ -708,7 +802,11 @@ private fun LibraryRow(item: MobileBrowseItem, onClick: () -> Unit) {
     }
 }
 @Composable
-private fun Shelf(title: String, items: List<MobileBrowseItem>, onClick: (MobileBrowseItem) -> Unit) {
+private fun Shelf(
+    title: String, items: List<MobileBrowseItem>,
+    library: List<MobileBrowseItem>,
+    onClick: (MobileBrowseItem) -> Unit
+) {
     if (items.isEmpty()) return
     Column(Modifier.padding(top = 31.dp, bottom = 14.dp)) {
         Text(title, color = white, fontSize = 23.sp, fontWeight = FontWeight.Bold,
@@ -717,7 +815,9 @@ private fun Shelf(title: String, items: List<MobileBrowseItem>, onClick: (Mobile
             contentPadding = PaddingValues(end = 16.dp)) {
             items(items) { item ->
                 Column(Modifier.width(158.dp).clickable { onClick(item) }) {
-                    Cover(item.image, Modifier.size(158.dp), item.kind == "artist")
+                    Cover(artworkFor(item, library), Modifier.size(158.dp),
+                        round = item.kind == "artist",
+                        isLiked = item.path == "/collection/tracks")
                     Spacer(Modifier.height(9.dp))
                     Text(item.title, color = white, fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold, maxLines = 2,
