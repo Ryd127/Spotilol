@@ -11,6 +11,12 @@ def one(rel,old,new):
 
 shell="ui/components/NativeMobileShell.kt"
 one(shell,
+    'val detail = listOf("/playlist/", "/album/", "/artist/", "/collection/", "/show/").any { browse.path.startsWith(it) } && !(tab == "Library" && browse.path == "/collection/tracks")',
+    'val detail = listOf("/playlist/", "/album/", "/artist/", "/collection/", "/show/").any { browse.path.startsWith(it) }')
+one(shell,
+    'onNavigate(when(label) { "Home" -> "/"; "Library" -> "/collection/tracks"; else -> "/search" })',
+    'onNavigate(when(label) { "Home", "Library" -> "/"; else -> "/search" })')
+one(shell,
     '    var query by rememberSaveable { mutableStateOf("") }',
     '    var query by rememberSaveable { mutableStateOf("") }\n'
     '    var musicOnly by rememberSaveable { mutableStateOf(false) }')
@@ -38,6 +44,44 @@ one(shell,
     '''            }
             if(track.title.isNotBlank()) {''',
     '''            }
+            }
+            if(track.title.isNotBlank()) {''')
+one(shell,
+    '                items(rows, key = { it.path + "|" + it.title }) { row ->',
+    '''                if (tab == "Home" && !detail) {
+                    items(rows.chunked(2)) { pair ->
+                        Row(Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            pair.forEach { entry ->
+                                Row(
+                                    Modifier.weight(1f).height(62.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF282828))
+                                        .clickable {
+                                            returnPath = browse.path
+                                            onNavigate(entry.path)
+                                        },
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    MobileArt(entry.image, Modifier.size(62.dp))
+                                    Text(entry.title, modifier = Modifier.padding(horizontal = 7.dp),
+                                        color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            if(pair.size == 1) Spacer(Modifier.weight(1f))
+                        }
+                    }
+                } else {
+                items(rows, key = { it.path + "|" + it.title }) { row ->''')
+one(shell,
+    '''                }
+            }
+            }
+            if(track.title.isNotBlank()) {''',
+    '''                }
+                }
+            }
             }
             if(track.title.isNotBlank()) {''')
 one(shell,
