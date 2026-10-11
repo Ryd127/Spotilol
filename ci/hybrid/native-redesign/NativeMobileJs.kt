@@ -132,6 +132,10 @@ object NativeMobileJs {
           var lib=library();
           if(!lib.length&&!libPending)window.splNativeLoadLibrary();
           var h=root.querySelector('h1');
+          var owner=root.querySelector('[data-testid="creator-link"],[data-testid="playlist-owner"],[data-testid="entity-subtitle"] a[href*="/user/"]');
+          var creator=clean(owner&&owner.textContent,100);
+          var stats=root.querySelector('[data-testid="entity-subtitle"],[data-testid="playlist-description"]');
+          var meta=clean(stats&&stats.textContent,170);
           var rows=trackRows(root),cards=uniqueCards(root,100,path.startsWith('/search/'));
           var showRows=(path.startsWith('/album/')||path.startsWith('/playlist/')||path.startsWith('/collection/'));
           var firstCover='';
@@ -147,7 +151,7 @@ object NativeMobileJs {
                      document.querySelector('nav a[href="/"]')||
                      document.querySelector('a[href="/collection/tracks"]')),
             path:path,title:clean(h&&h.textContent,145),
-            cover:firstCover,
+            cover:firstCover,creator:creator,meta:meta,
             items:showRows&&rows.length?rows:cards,
             library:lib,
             sections:path==='/'?sections(root):[],
