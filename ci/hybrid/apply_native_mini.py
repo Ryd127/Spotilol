@@ -32,11 +32,17 @@ patch(main,
 patch(main,
     """        paletteSeedState.value = prefs.getString("PaletteSeed", null)
         blockServiceWorkerState.value = prefs.getBoolean("BlockServiceWorker", true)
-        applyOrientation()""",
+        applyOrientation()
+        applyKeepScreenOn()
+
+        captureMediaSearch(intent)""",
     """        paletteSeedState.value = prefs.getString("PaletteSeed", null)
         blockServiceWorkerState.value = prefs.getBoolean("BlockServiceWorker", true)
         nativeMiniEnabledState.value = prefs.getBoolean("NativeMiniPlayer", false)
-        applyOrientation()""")
+        applyOrientation()
+        applyKeepScreenOn()
+
+        captureMediaSearch(intent)""")
 patch(main,
     "            val blockServiceWorker = blockServiceWorkerState.value",
     "            val blockServiceWorker = blockServiceWorkerState.value\n"
