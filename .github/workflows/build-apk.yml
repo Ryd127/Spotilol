@@ -130,6 +130,7 @@ jobs:
           python3 ci/hybrid/apply_playback_stability.py
           python3 ci/hybrid/optimize_ui_sync.py
           python3 ci/hybrid/throttle_progress_bridge.py
+          python3 ci/hybrid/animate_ui_motion.py
 
       - name: Verify Gradle wrapper integrity
         shell: bash
