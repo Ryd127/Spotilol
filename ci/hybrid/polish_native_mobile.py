@@ -17,6 +17,9 @@ one(shell,
     'onNavigate(when(label) { "Home" -> "/"; "Library" -> "/collection/tracks"; else -> "/search" })',
     'onNavigate(when(label) { "Home", "Library" -> "/"; else -> "/search" })')
 one(shell,
+    'import androidx.compose.ui.layout.ContentScale',
+    'import androidx.compose.ui.layout.ContentScale\nimport androidx.compose.ui.platform.testTag')
+one(shell,
     '    var query by rememberSaveable { mutableStateOf("") }',
     '    var query by rememberSaveable { mutableStateOf("") }\n'
     '    var musicOnly by rememberSaveable { mutableStateOf(false) }')
@@ -37,9 +40,9 @@ one(shell,
     '''            LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),''',
     '''            Crossfade(targetState = browse.path + ":" + tab, animationSpec = tween(240),
-                label = "nativeScreen", modifier = Modifier.weight(1f)) { _ ->
+                label = "nativeScreen", modifier = Modifier.weight(1f)) { pageKey ->
             LazyColumn(
-                modifier = Modifier.fillMaxWidth(),''')
+                modifier = Modifier.fillMaxWidth().testTag(pageKey),''')
 one(shell,
     '''            }
             if(track.title.isNotBlank()) {''',
