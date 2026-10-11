@@ -102,13 +102,14 @@ data class MobileBrowseItem(
     val title: String,
     val subtitle: String = "",
     val image: String = "",
-    val kind: String = ""
+    val kind: String = "",
+    val color: String = ""
 ) {
     companion object {
         fun parse(o: JSONObject) = MobileBrowseItem(
             path = o.optString("path", ""), title = o.optString("title", ""),
             subtitle = o.optString("subtitle", ""), image = o.optString("image", ""),
-            kind = o.optString("kind", "")
+            kind = o.optString("kind", ""), color = o.optString("color", "")
         )
     }
 }
@@ -551,11 +552,20 @@ fun NativeMobileShell(
                                     Row(Modifier.fillMaxWidth().padding(bottom = 12.dp),
                                         horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                         group.forEachIndexed { index, entry ->
-                                            val shade = listOf(
-                                                Color(0xFFCF087C),Color(0xFF037967),
-                                                Color(0xFF7225D5),Color(0xFF777777),
-                                                Color(0xFF35789B),Color(0xFFAE6429)
-                                            )[(entry.title.hashCode() and Int.MAX_VALUE)%6]
+                                            // Prefer Spotify's card colour from the Web DOM.
+                                            // These named fallbacks match the screenshot examples.
+                                            val shade = runCatching {
+                                                Color(android.graphics.Color.parseColor(entry.color))
+                                            }.getOrElse {
+                                                when (entry.title.lowercase(java.util.Locale.ROOT)) {
+                                                    "музыка" -> Color(0xFFE00B85)
+                                                    "подкасты" -> Color(0xFF006F58)
+                                                    "мероприятия" -> Color(0xFF7800C8)
+                                                    "фитнес" -> Color(0xFF777777)
+                                                    "поп" -> Color(0xFFBA0777)
+                                                    else -> Color(0xFF325989)
+                                                }
+                                            }
                                             Box(Modifier.weight(1f).height(128.dp)
                                                 .clip(RoundedCornerShape(8.dp)).background(shade)
                                                 .clickable { clickItem(entry) }) {

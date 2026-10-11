@@ -90,9 +90,9 @@ one(main,
 gradle = Path("app/build.gradle.kts")
 value = gradle.read_text(encoding="utf-8")
 for old, new in [
-    ("versionCode = 41", "versionCode = 43"),
+    ("versionCode = 41", "versionCode = 44"),
     ('versionName = "1.2.0-vivo-native-redesign11"',
-     'versionName = "1.2.0-vivo-native-redesign13"')
+     'versionName = "1.2.0-vivo-native-redesign14"')
 ]:
     n=value.count(old)
     if n!=1: raise RuntimeError(f"Redesign12 version anchor {old!r}: {n}")
@@ -105,6 +105,6 @@ print("Redesign12: migrate legacy disabled UI once, restore native player readin
 js = (root / "ui/components/NativeMobileJs.kt").read_text(encoding="utf-8")
 ui = (root / "ui/components/NativeMobileShell.kt").read_text(encoding="utf-8")
 assert "redesign13" in js
-assert "knownImages" in js and "getComputedStyle" in js
-assert "artworkFor" in ui and "isLiked" in ui and "Все категории" in ui
+assert "knownImages" in js and "getComputedStyle" in js and "categoryColor" in js
+assert "artworkFor" in ui and "isLiked" in ui and "Все категории" in ui and "parseColor(entry.color)" in ui
 print("Redesign13: verified native cover mapping, CSS artwork, genre layout and liked-songs cover")

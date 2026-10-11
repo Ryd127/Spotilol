@@ -60,6 +60,23 @@ object NativeMobileJs {
           }
           return '';
         }
+        function categoryColor(root){
+          if(!root)return '';
+          var nodes=[root], desc=root.querySelectorAll?
+            root.querySelectorAll('[style*="background"],[class*="genre"],[class*="Genre"]'):[];
+          for(var i=0;i<desc.length&&i<14;i++)nodes.push(desc[i]);
+          for(var j=0;j<nodes.length;j++){
+            var color='';
+            try{color=getComputedStyle(nodes[j]).backgroundColor;}catch(e){}
+            var c=(color||'').match(/^rgba?\((\d+),\s*(\d+),\s*(\d+)/i);
+            if(!c)continue;
+            var r=+c[1],g=+c[2],b=+c[3];
+            // Ignore transparent and neutral dark card surfaces.
+            if(Math.max(r,g,b)-Math.min(r,g,b)<32)continue;
+            return '#'+[r,g,b].map(function(v){return v.toString(16).padStart(2,'0');}).join('');
+          }
+          return '';
+        }
         function closestCard(a){
           // Never choose a whole shelf/section: that repeated the first artist's
           // image on every tile in the previous native UI.
@@ -95,7 +112,8 @@ object NativeMobileJs {
           var subtitle='';
           var sub=card.querySelector('[data-testid="card-subtitle"],[data-testid="card-description"]');
           if(sub)subtitle=clean(sub.textContent,130);
-          return {path:p,title:label,subtitle:subtitle,image:img,kind:type};
+          return {path:p,title:label,subtitle:subtitle,image:img,kind:type,
+            color:(type==='genre'||type==='section')?categoryColor(card):''};
         }
         function uniqueCards(root,max,includeTracks){
           var links=root.querySelectorAll('a[href]');
