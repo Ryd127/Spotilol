@@ -117,6 +117,8 @@ data class MobileBrowseState(
     val path: String = "/",
     val title: String = "",
     val cover: String = "",
+    val creator: String = "",
+    val meta: String = "",
     val items: List<MobileBrowseItem> = emptyList(),
     val library: List<MobileBrowseItem> = emptyList(),
     val sections: List<MobileSection> = emptyList(),
@@ -146,6 +148,8 @@ data class MobileBrowseState(
                 path = o.optString("path", "/"),
                 title = o.optString("title", ""),
                 cover = o.optString("cover", ""),
+                creator = o.optString("creator", ""),
+                meta = o.optString("meta", ""),
                 items = itemsFrom(o.optJSONArray("items"), 140),
                 library = itemsFrom(o.optJSONArray("library"), 220),
                 sections = shelves,
@@ -225,8 +229,9 @@ private fun ToolIcon(
     }
 }
 @Composable
-private fun Avatar() {
-    Box(Modifier.size(39.dp).clip(CircleShape).background(Color(0xFFFF673D)),
+private fun Avatar(onClick: () -> Unit) {
+    Box(Modifier.size(39.dp).clip(CircleShape).background(Color(0xFFFF673D))
+        .clickable(onClick = onClick),
         contentAlignment = Alignment.Center) {
         Text("R", fontSize = 21.sp, fontWeight = FontWeight.Bold, color = Color(0xFF151515))
     }
@@ -321,7 +326,7 @@ fun NativeMobileShell(
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Avatar()
+                        Avatar(onOpenSettings)
                         Spacer(Modifier.width(4.dp))
                         listOf("Все","Клипы","Музыка","Подкасты").forEach { name ->
                             Pill(name, name == filter) { filter = name }
@@ -331,7 +336,7 @@ fun NativeMobileShell(
                 tab == "Search" -> {
                     Row(Modifier.fillMaxWidth().padding(start = 17.dp, top = 12.dp, end = 12.dp, bottom = 20.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Avatar()
+                        Avatar(onOpenSettings)
                         Spacer(Modifier.width(16.dp))
                         Text("Поиск", modifier = Modifier.weight(1f),
                             fontSize = 27.sp, fontWeight = FontWeight.Bold, color = white)
@@ -360,7 +365,7 @@ fun NativeMobileShell(
                 else -> {
                     Row(Modifier.fillMaxWidth().padding(start = 16.dp, top = 10.dp, end = 10.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Avatar()
+                        Avatar(onOpenSettings)
                         Spacer(Modifier.width(14.dp))
                         Text("Моя медиатека", color = white, fontSize = 26.sp,
                             fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
@@ -399,9 +404,15 @@ fun NativeMobileShell(
                                     Text(browse.title.ifBlank { "Плейлист" }, color = white, fontSize = 26.sp,
                                         fontWeight = FontWeight.ExtraBold, modifier = Modifier.fillMaxWidth())
                                     Spacer(Modifier.height(7.dp))
-                                    Text(if (browse.path.startsWith("/album/")) "Альбом" else
-                                        if (browse.path.startsWith("/artist/")) "Исполнитель" else "Плейлист",
-                                        color = grey, modifier = Modifier.fillMaxWidth(), fontSize = 13.sp)
+                                    if (browse.creator.isNotBlank()) {
+                                        Text(browse.creator, color = white, modifier = Modifier.fillMaxWidth(),
+                                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                                        Spacer(Modifier.height(7.dp))
+                                    }
+                                    Text(browse.meta.ifBlank {
+                                        if (browse.path.startsWith("/album/")) "Альбом" else
+                                            if (browse.path.startsWith("/artist/")) "Исполнитель" else "Плейлист"
+                                    }, color = grey, modifier = Modifier.fillMaxWidth(), fontSize = 13.sp)
                                     Spacer(Modifier.height(15.dp))
                                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                                         ToolIcon(TablerIcons.Heart, "Добавить в медиатеку", onOpenWeb, grey)
@@ -604,11 +615,16 @@ fun NativeMobileShell(
                         Cover(track.cover, Modifier.size(side).align(Alignment.Center))
                     }
                     Spacer(Modifier.weight(.6f))
-                    Text(track.title, color = white, fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold, maxLines = 2,
-                        overflow = TextOverflow.Ellipsis)
-                    Text(track.artist, color = white.copy(alpha = .72f), fontSize = 15.sp,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(track.title, color = white, fontSize = 22.sp,
+                                fontWeight = FontWeight.Bold, maxLines = 2,
+                                overflow = TextOverflow.Ellipsis)
+                            Text(track.artist, color = white.copy(alpha = .72f), fontSize = 15.sp,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        ToolIcon(TablerIcons.Heart, "Добавить в медиатеку", onOpenWeb, white, 27)
+                    }
                     Spacer(Modifier.height(18.dp))
                     var seeking by remember(track.title) { mutableStateOf<Float?>(null) }
                     Slider(value = seeking ?: progress(track),
