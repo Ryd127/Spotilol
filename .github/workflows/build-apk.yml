@@ -135,6 +135,7 @@ jobs:
           python3 ci/hybrid/apply_native_mobile.py
           python3 ci/hybrid/polish_native_mobile.py
           python3 ci/hybrid/guard_native_session.py
+          python3 ci/hybrid/redesign_native_ui.py
 
       - name: Verify Gradle wrapper integrity
         shell: bash
