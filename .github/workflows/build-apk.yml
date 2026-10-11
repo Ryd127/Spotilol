@@ -133,6 +133,7 @@ jobs:
           python3 ci/hybrid/animate_ui_motion.py
           python3 ci/hybrid/apply_native_mini.py
           python3 ci/hybrid/apply_native_mobile.py
+          python3 ci/hybrid/polish_native_mobile.py
 
       - name: Verify Gradle wrapper integrity
         shell: bash
