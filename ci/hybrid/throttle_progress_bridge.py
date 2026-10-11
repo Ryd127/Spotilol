@@ -154,7 +154,7 @@ patch_unique(service,
         val traceAt = android.os.SystemClock.uptimeMillis()
         if (traceSkip && Logger.isEnabled()) {
             Logger.s("LAT/native", "event=MEDIA_SESSION_RECEIVED dir=" +
-                if (js == "actSkipForward();") "next" else "prev")
+                (if (js == "actSkipForward();") "next" else "prev"))
         }
         Handler(Looper.getMainLooper()).post {""")
 patch_unique(service,
@@ -171,18 +171,8 @@ patch_unique(service,
                 } else {
                     wv.evaluateJavascript(js, null)
                 }""")
-patch_unique(service,
-    '                ACTION_NEXT -> webView?.evaluateJavascript("actSkipForward()", null)',
-    '''                ACTION_NEXT -> {
-                    if (Logger.isEnabled()) Logger.s("LAT/native", "event=NOTIFICATION_NEXT")
-                    webView?.evaluateJavascript("actSkipForward()", null)
-                }''')
-patch_unique(service,
-    '                ACTION_PREV -> webView?.evaluateJavascript("actSkipBack()", null)',
-    '''                ACTION_PREV -> {
-                    if (Logger.isEnabled()) Logger.s("LAT/native", "event=NOTIFICATION_PREV")
-                    webView?.evaluateJavascript("actSkipBack()", null)
-                }''')
+# Hybrid1 overlay changed the notification receiver; avoid assuming the
+# original ACTION_NEXT/ACTION_PREV implementation. JS capture still traces clicks.
 
 gradle = Path("app/build.gradle.kts")
 patch_unique(gradle, "versionCode = 34", "versionCode = 35")
