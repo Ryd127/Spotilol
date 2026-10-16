@@ -1,9 +1,13 @@
 # Building Spotilol
 
-Current source version: **1.1.9 (19)**  
+Current feature-branch source version: **1.2.4-native15 (45)**
 Application ID: `com.project.lol`
 
-This repository keeps Spotilol's original application identity and core behavior while adding build hardening, Android 16 KiB page-size compatibility, release verification, and security fixes around WebView/native bridge boundaries.
+This branch combines upstream Spotilol 1.2.4 with the existing native Android interface, guarded playback controls, build hardening, Android 16 KiB page-size compatibility and origin-scoped WebView bridge. Stable main remains separate and unchanged. See `docs/INTEGRATION-1.2.4.md` for provenance and device-test limitations.
+
+The checked-in app tree is the actual build input. Historical scripts under `ci/hybrid/` reconstruct earlier experiments only; do not run them over this branch or replace its source with an upstream download.
+
+The independent package and artwork provider can coexist with official Spotify. This build does not impersonate Spotify's package, so Vivo Origin Island integration is not guaranteed.
 
 ## Toolchain
 
@@ -19,7 +23,7 @@ This repository keeps Spotilol's original application identity and core behavior
 
 ## Local build
 
-Open the project in Android Studio and let SDK Manager install the requested components, or run `build-apk.ps1` on Windows.
+Open the project in Android Studio and let SDK Manager install the requested components, or run `build-apk.ps1` on Windows. Run `node ci/verify-android.cjs` first to check the embedded JavaScript and integration regressions. No personal Spotify session or Firebase configuration is required to compile the app; optional analytics calls must remain nullable-safe.
 
 Gradle outputs are written to:
 
@@ -73,7 +77,7 @@ Android only allows an APK to update an installed app when the signing identity 
 
 `.github/workflows/build-apk.yml` performs the complete release validation pipeline:
 
-1. verifies the committed Gradle Wrapper JAR and Gradle distribution checksum;
+1. checks the integrated source and embedded JavaScript, then verifies the committed Gradle Wrapper JAR and Gradle distribution checksum;
 2. installs the exact Android SDK, Build Tools, NDK and CMake versions;
 3. records the build environment;
 4. resolves and audits critical release dependencies;
@@ -112,7 +116,7 @@ A tag named exactly `v<versionName>` triggers release publication after the buil
 For example:
 
 ```text
-v1.1.9
+v1.2.4-native15
 ```
 
 The release job verifies that the tag matches the APK version, requires production signing, validates the certificate and SHA-256 checksum, then publishes:
@@ -122,3 +126,5 @@ The release job verifies that the tag matches the APK version, requires producti
 - `RELEASE_INFO.txt`
 
 Release descriptions are intentionally left empty.
+
+Feature-branch pushes run verification and upload build artifacts only. Do not create a release tag until the corresponding build has also passed the required real-device checks.
