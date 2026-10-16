@@ -5,7 +5,6 @@ plugins {
 android {
     namespace = "net.qiujuer.lame"
     compileSdk = 37
-    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         minSdk = 28

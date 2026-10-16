@@ -2,7 +2,12 @@ package com.project.lol.webview.injections
 
 object PlaybackControls {
     const val CONTENT = """
+            window.splAbortPause = function() {
+                window.__splPauseTok = (window.__splPauseTok || 0) + 1;
+                window.__splPauseActive = null;
+            };
             window.playFromUri = function(uri, contextUri) {
+                try { window.splAbortPause(); } catch(e) {}
                 var playContext = contextUri || uri;
                 var isLikedSongs = (playContext === 'your_library' || playContext.indexOf('collection') !== -1 || playContext === 'playlists' || playContext === 'spotify:collection:tracks');
 
@@ -259,6 +264,8 @@ object PlaybackControls {
                 return true;
             };
             window.splSkip=function(dir,requeued){
+                if(!requeued && window.splTraceSkipStart) window.splTraceSkipStart(dir,'js_command');
+                else if(requeued && window.splTraceSkipStage) window.splTraceSkipStage('REQUERY_BUTTON');
                 var testId=dir==='next'?'control-button-skip-forward':'control-button-skip-back';
                 var btn=window.splVisibleControl(testId);
                 if(!btn||btn.disabled||btn.getAttribute('aria-disabled')==='true'){
@@ -266,13 +273,23 @@ object PlaybackControls {
                     // only when no usable button exists; never click a second time after a successful
                     // click because delayed metadata could otherwise skip two tracks.
                     if(!requeued){
+                        if(window.splTraceSkipStage) window.splTraceSkipStage('BUTTON_UNAVAILABLE','first_lookup');
                         setTimeout(function(){window.splSkip(dir,true);},120);
                         return true;
                     }
                     try{ AndBridge.dbg('w','player command: '+dir+' button unavailable'); }catch(e){}
                     return false;
                 }
-                try{ AndBridge.wakeUp(); btn.click(); return true; }catch(e){ return false; }
+                try{
+                    AndBridge.wakeUp();
+                    if(window.splTraceSkipStage) window.splTraceSkipStage('WAKE_RETURN');
+                    btn.click();
+                    if(window.splTraceSkipStage) window.splTraceSkipStage('DOM_CLICK_RETURN');
+                    return true;
+                }catch(e){
+                    if(window.splTraceSkipStage) window.splTraceSkipStage('DOM_CLICK_EXCEPTION');
+                    return false;
+                }
             };
             window.actSkipBack = function() { return window.splSkip('prev',false); };
             window.actSkipForward = function() { return window.splSkip('next',false); };
@@ -330,6 +347,7 @@ object PlaybackControls {
                 }
             };
             window.actAddToFav = function() {
+                if(window.__splFavBusy) return;
                 var fb = document.querySelector('div[data-testid=now-playing-widget]>div:last-child>button');
                 if(fb) {
                     if(fb.getAttribute('aria-checked')==='false') {
@@ -337,9 +355,12 @@ object PlaybackControls {
                         isfav=true;
                         updMedia();
                     } else {
+                        window.__splFavBusy = true;
                         AndBridge.wakeUp();
                         fb.click();
+                        var polls = 0;
                         var rfint = setInterval(function(){
+                            polls++;
                             var fr = document.querySelector('#context-menu button[role=menuitemcheckbox][aria-checked=true]');
                             if(fr) {
                                 clearInterval(rfint);
@@ -348,7 +369,12 @@ object PlaybackControls {
                                     var sb = document.querySelector('#context-menu button[type=submit]');
                                     if(sb) { sb.click(); isfav=false; updMedia(); }
                                     AndBridge.wakeOff();
+                                    window.__splFavBusy = false;
                                 },500);
+                            } else if (polls > 15) {
+                                clearInterval(rfint);
+                                AndBridge.wakeOff();
+                                window.__splFavBusy = false;
                             }
                         },1000);
                     }
@@ -358,6 +384,6 @@ object PlaybackControls {
                 var rg = document.querySelector('div[data-testid=playback-progressbar] input[type=range]');
                 if(rg) { rg.value=pos+1; rg.dispatchEvent(new Event('change',{bubbles:true})); }
             };
-        
+
     """
 }

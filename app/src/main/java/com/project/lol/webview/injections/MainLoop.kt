@@ -35,13 +35,13 @@ object MainLoop {
                     if(pb) wirePlayBtn(pb);
                 },5000);
 
-                var tries = 0;
-                var bootIv = setInterval(function(){
-                    tries++;
+                // React may replace the player controls after any track change.
+                // Keep this independent of the heavier 5s UI housekeeping tick.
+                if(window.__splPlayBindPoll) clearInterval(window.__splPlayBindPoll);
+                window.__splPlayBindPoll = setInterval(function(){
                     var pb = document.querySelector('aside button[data-testid=control-button-playpause]:not(.fuckd)');
-                    if(pb){ clearInterval(bootIv); wirePlayBtn(pb); }
-                    else if(tries > 100){ clearInterval(bootIv); }
-                },300);
+                    if(pb) wirePlayBtn(pb);
+                },350);
             };
 
             window.wirePlayBtn = function(pb){
@@ -49,8 +49,7 @@ object MainLoop {
                 pb.classList.add('fuckd');
 
                 pBtn.addEventListener('click', function(e){
-                    var rawPlayState=(typeof window.splReadPlayingState==='function')?window.splReadPlayingState():window.splIsPlaying();
-                    if(rawPlayState!==false) {
+                    if(window.splIsPlaying()!==false) {
                         reqPause=true;
                         ulFlag=false;
                         AndBridge.wakeOff();

@@ -15,13 +15,12 @@ import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
+import android.media.AudioAttributes
 import android.media.AudioDeviceCallback
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.AudioPlaybackConfiguration
 import android.net.Uri
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -34,7 +33,6 @@ import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import android.webkit.WebView
-import android.view.KeyEvent
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -47,23 +45,24 @@ import androidx.core.graphics.createBitmap
 import androidx.core.graphics.drawable.IconCompat
 import androidx.core.graphics.scale
 import androidx.core.graphics.toColorInt
-import com.project.lol.webview.helpers.AccentTheme
+import com.project.lol.util.AppLocale
+import com.project.lol.ui.theme.ThemeController
 import com.project.lol.util.Logger
 import com.project.lol.widget.WidgetSource
 import com.project.lol.widget.WidgetState
 import com.project.lol.widget.WidgetUpdater
-import com.project.lol.webview.SpotifyWebViewSession
 import java.lang.ref.WeakReference
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.min
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+
+private fun jsString(value: String?): String = org.json.JSONObject.quote(value ?: "")
 
 class MediaNotificationService : MediaBrowserServiceCompat() {
 
@@ -75,7 +74,6 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         private const val MEDIA_ID_ROOT = "__ROOT__"
 
         const val ACTION_PLAY_PAUSE = "com.project.lol.ACTION_PLAY_PAUSE"
-        const val ACTION_PAUSE = "com.project.lol.ACTION_PAUSE"
         const val ACTION_NEXT = "com.project.lol.ACTION_NEXT"
         const val ACTION_PREV = "com.project.lol.ACTION_PREV"
         const val ACTION_SHUFFLE = "com.project.lol.ACTION_SHUFFLE"
@@ -87,17 +85,27 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         private const val CUSTOM_ACTION_TOGGLE_SHUFFLE = "toggle_shuffle"
         private const val CUSTOM_ACTION_REPEAT = "toggle_repeat"
 
-        private data class PendingBrowserResult(
-            val key: String,
-            val result: Result<MutableList<MediaBrowserCompat.MediaItem>>
-        )
+        private const val WAKE_LOCK_RENEW_MS = 10 * 60 * 1000L
+        private val pendingCallbacks =
+            ConcurrentHashMap<String, Result<MutableList<MediaBrowserCompat.MediaItem>>>()
+        private val pendingSearchCallbacks =
+            ConcurrentHashMap<String, Result<MutableList<MediaBrowserCompat.MediaItem>>>()
 
-        // Keyed by a unique request token rather than parent/query text. Android Auto is allowed to
-        // issue the same request again before the previous async WebView fetch finishes; without a
-        // token, the first JS response could accidentally complete the newer Result.
-        private val pendingCallbacks = ConcurrentHashMap<String, PendingBrowserResult>()
-        private val pendingSearchCallbacks = ConcurrentHashMap<String, PendingBrowserResult>()
-        private val browserRequestSeq = AtomicLong(0L)
+        @Volatile
+        var playerLoaded = false
+            private set
+
+        fun onPlayerLoaded() {
+            playerLoaded = true
+            val parents = pendingCallbacks.keys.toList()
+            if (parents.isEmpty()) return
+            Logger.i(TAG, "player ready: retrying ${parents.size} pending media loads")
+            parents.forEach { parentId ->
+                instance?.wakeAndRun(
+                    "if (typeof window.fetchMediaItems === 'function') window.fetchMediaItems(${jsString(parentId)});"
+                )
+            }
+        }
 
         private const val MEDIA_ID_PLAYLISTS = "playlists"
         private const val MEDIA_ID_ALBUMS = "albums"
@@ -115,54 +123,21 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH
 
         private const val NOTIF_COLOR = 0xFFE0E0E0.toInt()
-        private const val PLAYBACK_LOCK_RELEASE_GRACE_MS = 8_000L
-        private const val PLAYBACK_LOCK_GUARD_MS = 30_000L
-        private const val PLAYBACK_WAKE_LOCK_TIMEOUT_MS = 120_000L
-        private const val PLAYBACK_COMMAND_LOCK_TIMEOUT_MS = 15_000L
-        private const val COVER_TRANSITION_GRACE_MS = 1_200L
-        private const val MEDIA_SESSION_ART_MAX_PX = 256
-        private const val MEDIA_SESSION_DISPLAY_ICON_MAX_PX = 128
-        private const val ART_TAG = "media.art"
-        private const val COVER_USER_AGENT =
-            "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/150.0.0.0 Mobile Safari/537.36"
 
-        var webView: WebView? = null
+        val webView: WebView?
+            get() = com.project.lol.webview.WebViewHost.webView
         var instance: MediaNotificationService? = null
         private var appContext: Context? = null
 
         @Volatile
         private var taskRemoved = false
 
-        private fun jsString(value: String): String = org.json.JSONObject.quote(value)
-
-        private fun sendEmptyResult(result: Result<MutableList<MediaBrowserCompat.MediaItem>>) {
-            runCatching { result.sendResult(mutableListOf()) }
-                .onFailure { Logger.w(TAG, "Failed to complete pending media browser result: ${it.message}") }
-        }
-
-        private fun drainPendingBrowserResults() {
-            val browse = pendingCallbacks.values.toList()
-            pendingCallbacks.clear()
-            browse.forEach { sendEmptyResult(it.result) }
-
-            val search = pendingSearchCallbacks.values.toList()
-            pendingSearchCallbacks.clear()
-            search.forEach { sendEmptyResult(it.result) }
-        }
-
-        private fun nextBrowserToken(prefix: Char): String =
-            "$prefix${browserRequestSeq.incrementAndGet().toString(36)}"
+        @Volatile
+        private var browserBound = false
 
         @JvmStatic
-        fun onMediaItemsLoaded(parentId: String, requestToken: String, json: String) {
-            val pending = pendingCallbacks.remove(requestToken) ?: return
-            val result = pending.result
-            if (pending.key != parentId) {
-                Logger.w(TAG, "Ignoring mismatched browse response token=$requestToken parent=$parentId expected=${pending.key}")
-                sendEmptyResult(result)
-                return
-            }
+        fun onMediaItemsLoaded(parentId: String, json: String) {
+            val result = pendingCallbacks.remove(parentId) ?: return
             val items = mutableListOf<MediaBrowserCompat.MediaItem>()
             if (json.isNotEmpty() && json != "null" && json != "[]") {
                 try {
@@ -199,14 +174,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         }
 
         @JvmStatic
-        fun onSearchCompleted(query: String, requestToken: String, json: String) {
-            val pending = pendingSearchCallbacks.remove(requestToken) ?: return
-            val result = pending.result
-            if (pending.key != query) {
-                Logger.w(TAG, "Ignoring mismatched search response token=$requestToken query=$query expected=${pending.key}")
-                sendEmptyResult(result)
-                return
-            }
+        fun onSearchCompleted(query: String, json: String) {
+            val result = pendingSearchCallbacks.remove(query) ?: return
             val items = mutableListOf<MediaBrowserCompat.MediaItem>()
             if (json.isNotEmpty() && json != "null" && json != "[]") {
                 try {
@@ -255,42 +224,27 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     private var isShuffleAvailable = true
     private var isFavorite = false
     private var coverBitmap: Bitmap? = null
-    private var coverContentUri: Uri? = null
-    private var coverContentUriTrackKey = ""
     private var currentTitle = ""
     private var currentArtist = ""
     private var currentAlbum = ""
     private var currentPosition: Long = 0L
     private var currentDuration: Long = 0L
     private var lastCoverUrl = ""
-    private var coverBitmapTrackKey = ""
-    private var coverRequestSeq = 0L
     private var lastActiveContextId: String? = null
     private var isRepeat = "false"
     private var wakeLock: PowerManager.WakeLock? = null
-    private var wifiLock: WifiManager.WifiLock? = null
-
-    private val playbackLockReleaseRunnable = Runnable {
-        if (!isPlaying) releasePlaybackLocksNow()
-    }
-    private val playbackLockGuardRunnable = object : Runnable {
-        override fun run() {
-            if (!isPlaying) return
-            acquirePlaybackLocks()
-        }
-    }
     private val widgetScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private var lastWidgetPushAt = 0L
 
     private val actionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
-                ACTION_PLAY_PAUSE -> dispatchPlaybackCommand(!isPlaying)
-                ACTION_NEXT -> dispatchSkipCommand(next = true)
-                ACTION_PREV -> dispatchSkipCommand(next = false)
-                ACTION_SHUFFLE -> wakeAndRun("actToggleShuffle();")
-                ACTION_REPEAT -> wakeAndRun("actRepeat();")
-                ACTION_FAVORITE -> wakeAndRun("actAddToFav();")
+                ACTION_PLAY_PAUSE -> requestPlaybackState(!isPlaying)
+                ACTION_NEXT -> wakeAndRun("actSkipForward();")
+                ACTION_PREV -> wakeAndRun("actSkipBack();")
+                ACTION_SHUFFLE -> webView?.evaluateJavascript("actToggleShuffle()", null)
+                ACTION_REPEAT -> webView?.evaluateJavascript("actRepeat()", null)
+                ACTION_FAVORITE -> webView?.evaluateJavascript("actAddToFav()", null)
                 ACTION_WIDGET_REFRESH -> pushWidgetState(force = true)
             }
         }
@@ -391,10 +345,9 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     private var lastMediaStatusJson: String? = null
     private var firstHeadsetCallback = true
     private var accentCache = 0
-    private var artworkPublishPending = false
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-        if (key == "PaletteSeed" || key == "MaterialYou") {
+        if (key == "ThemePreset" || key == "MaterialYou") {
             accentCache = 0
             mainHandler.post {
                 showNotification()
@@ -428,7 +381,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     private fun accent(): Int {
         if (accentCache == 0) {
             accentCache = try {
-                AccentTheme.resolveHex(this).toColorInt()
+                ThemeController.accentHex(this).toColorInt()
             } catch (_: Exception) {
                 0xFFE0E0E0.toInt()
             }
@@ -449,14 +402,9 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
 
     override fun onCreate() {
         super.onCreate()
-        // Swipe-stop belongs to the service instance that received onTaskRemoved().
-        // A later explicit start in the same process must not inherit that stale latch.
-        taskRemoved = false
-        // MediaBrowser Result objects belong to the previous service/client lifecycle. Never carry
-        // detached results into a fresh service instance.
-        drainPendingBrowserResults()
         instance = this
         appContext = applicationContext
+        taskRemoved = false
 
         try {
             createNotificationChannel()
@@ -464,28 +412,19 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             Logger.e(TAG, "Failed to create notification channel", e)
         }
 
-        // Enter foreground immediately. Spotilol has historically depended on doing this as early
-        // as possible; the first notification may exist for a few milliseconds without a session
-        // token, then is replaced below as soon as MediaSession is ready.
-        try {
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotificationSafe(), getStartForegroundServiceType())
-        } catch (e: Throwable) {
-            Logger.e(TAG, "Failed to start foreground", e)
-        }
-
+        // Media session first: the very first foreground notification is then a
+        // proper MediaStyle notification carrying the session token, and OEM
+        // media routing / battery logic keys off an active session immediately.
         try {
             setupMediaSession()
-            updatePlaybackState()
-            updateMetadata()
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to setup media session", e)
         }
 
-        // Re-assert the foreground notification with the real MediaSession token/state.
         try {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotificationSafe(), getStartForegroundServiceType())
         } catch (e: Throwable) {
-            Logger.e(TAG, "Failed to refresh foreground notification after MediaSession setup", e)
+            Logger.e(TAG, "Failed to start foreground", e)
         }
 
         try {
@@ -498,6 +437,12 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         } catch (e: Exception) {
             Logger.e(TAG, "Failed to register disconnect receivers", e)
         }
+        try {
+            getSystemService(AudioManager::class.java)
+                .registerAudioPlaybackCallback(navPromptCallback, mainHandler)
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to register nav prompt callback", e)
+        }
         getSharedPreferences("spotilol_prefs", MODE_PRIVATE)
             .registerOnSharedPreferenceChangeListener(prefsListener)
         Logger.i(TAG, "media service ready: session, notification and receivers up")
@@ -505,7 +450,7 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
 
     @Suppress("DEPRECATION")
     private fun getStartForegroundServiceType(): Int {
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
         } else {
             0
@@ -518,32 +463,21 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent == null) {
+            Logger.i(TAG, "service restarted by the system, rebuilding web player")
+            runCatching { com.project.lol.webview.WebViewHost.ensure(this) }
+        }
         try {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotificationSafe(), getStartForegroundServiceType())
         } catch (e: Throwable) {
             Logger.e(TAG, "Failed to re-assert foreground", e)
         }
-
-        // Notification actions target this foreground service explicitly. Hardware headset keys keep
-        // their standard ACTION_MEDIA_BUTTON path and are decoded by MediaButtonReceiver below.
-        when (intent?.action) {
-            ACTION_PLAY_PAUSE -> dispatchPlaybackCommand(!isPlaying)
-            ACTION_PAUSE -> dispatchPlaybackCommand(false)
-            ACTION_NEXT -> dispatchSkipCommand(next = true)
-            ACTION_PREV -> dispatchSkipCommand(next = false)
-            ACTION_SHUFFLE -> wakeAndRun("actToggleShuffle();")
-            ACTION_REPEAT -> wakeAndRun("actRepeat();")
-            ACTION_FAVORITE -> wakeAndRun("actAddToFav();")
-            ACTION_WIDGET_REFRESH -> pushWidgetState(force = true)
-            Intent.ACTION_MEDIA_BUTTON -> {
-                try {
-                    MediaButtonReceiver.handleIntent(mediaSession, intent)
-                } catch (e: Exception) {
-                    Logger.e(TAG, "Failed to handle media button intent", e)
-                }
-            }
+        try {
+            MediaButtonReceiver.handleIntent(mediaSession, intent)
+        } catch (e: Exception) {
+            Logger.e(TAG, "Failed to handle media button intent", e)
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     override fun onGetRoot(
@@ -554,6 +488,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         val andAuto = getSharedPreferences("spotilol_prefs", MODE_PRIVATE)
             .getBoolean("AndAuto", true)
         if (!andAuto) return null
+        browserBound = true
+        com.project.lol.webview.WebViewHost.ensure(this)
         val extras = Bundle().apply {
             putBoolean("android.media.browse.SEARCH_SUPPORTED", true)
             putBoolean("android.media.browse.CONTENT_STYLE_SUPPORTED", true)
@@ -561,6 +497,12 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             putInt("android.media.browse.CONTENT_STYLE_PLAYABLE_HINT", 1)
         }
         return BrowserRoot(MEDIA_ID_ROOT, extras)
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        browserBound = false
+        Logger.i(TAG, "media browser client unbound")
+        return super.onUnbind(intent)
     }
 
     override fun onLoadChildren(
@@ -582,20 +524,14 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             lastActiveContextId = parentId
         }
         result.detach()
-        val requestToken = nextBrowserToken('b')
-        val pending = PendingBrowserResult(parentId, result)
-        pendingCallbacks[requestToken] = pending
-        val dispatched = wakeAndRun(
-            "if (typeof window.fetchMediaItems === 'function') " +
-                "window.fetchMediaItems(${jsString(parentId)}, ${jsString(requestToken)});"
-        )
-        if (!dispatched) {
-            if (pendingCallbacks.remove(requestToken, pending)) sendEmptyResult(result)
-            return
-        }
-        mainHandler.postDelayed({
-            if (pendingCallbacks.remove(requestToken, pending)) sendEmptyResult(result)
-        }, 20_000L)
+        pendingCallbacks.remove(parentId)?.sendResult(mutableListOf())
+        pendingCallbacks[parentId] = result
+        wakeAndRun("if (typeof window.fetchMediaItems === 'function') window.fetchMediaItems(${jsString(parentId)});")
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (pendingCallbacks.remove(parentId, result)) {
+                result.sendResult(mutableListOf())
+            }
+        }, if (playerLoaded) 20000L else 60000L)
     }
 
     private fun createBrowsableItem(id: String, title: String): MediaBrowserCompat.MediaItem {
@@ -621,71 +557,66 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             return
         }
         result.detach()
-        val requestToken = nextBrowserToken('s')
-        val pending = PendingBrowserResult(query, result)
-        pendingSearchCallbacks[requestToken] = pending
-        val dispatched = wakeAndRun(
-            "if (typeof window.searchMediaItems === 'function') " +
-                "window.searchMediaItems(${jsString(query)}, ${jsString(requestToken)});"
-        )
-        if (!dispatched) {
-            if (pendingSearchCallbacks.remove(requestToken, pending)) sendEmptyResult(result)
-            return
-        }
-        mainHandler.postDelayed({
-            if (pendingSearchCallbacks.remove(requestToken, pending)) sendEmptyResult(result)
-        }, 20_000L)
+        pendingSearchCallbacks.remove(query)?.sendResult(mutableListOf())
+        pendingSearchCallbacks[query] = result
+        wakeAndRun("if (typeof window.searchMediaItems === 'function') window.searchMediaItems(${jsString(query)});")
     }
 
-    private fun wakeAndRun(js: String): Boolean {
-        val wv = webView
-        if (wv == null) {
-            Logger.w(TAG, "Media command dropped because WebView is not bound")
-            return false
+    private fun wakeAndRun(js: String) {
+        val wv = webView ?: return
+        val traceSkip = js == "actSkipForward();" || js == "actSkipBack();"
+        val traceAt = android.os.SystemClock.uptimeMillis()
+        if (traceSkip && Logger.isEnabled()) {
+            Logger.s("LAT/native", "event=MEDIA_SESSION_RECEIVED dir=" +
+                (if (js == "actSkipForward();") "next" else "prev"))
         }
         Handler(Looper.getMainLooper()).post {
             try {
-                wv.resumeTimers()
-                wv.onResume()
-                wv.dispatchWindowVisibilityChanged(android.view.View.VISIBLE)
-                wv.evaluateJavascript(js, null)
+                if (!com.project.lol.security.WebSecurityPolicy.isPlayer(wv.url)) return@post
+                // Foreground WebView is already running. Forcing onResume() and
+                // visibility changes for every transport action can trigger UI churn.
+                if (!wv.isShown) {
+                    wv.resumeTimers()
+                    wv.onResume()
+                    wv.dispatchWindowVisibilityChanged(android.view.View.VISIBLE)
+                }
+                if (traceSkip) {
+                    if (Logger.isEnabled()) Logger.s("LAT/native",
+                        "event=WEBVIEW_EVAL_QUEUED dt=" +
+                            (android.os.SystemClock.uptimeMillis() - traceAt) + "ms")
+                    wv.evaluateJavascript(js) { _ ->
+                        if (Logger.isEnabled()) Logger.s("LAT/native",
+                            "event=WEBVIEW_EVAL_CALLBACK dt=" +
+                                (android.os.SystemClock.uptimeMillis() - traceAt) + "ms")
+                    }
+                } else {
+                    wv.evaluateJavascript(js, null)
+                }
             } catch (e: Exception) {
                 Logger.e(TAG, "Error waking WebView in wakeAndRun", e)
             }
         }
-        return true
     }
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (level >= TRIM_MEMORY_RUNNING_LOW) {
-            coverRequestSeq++
+        if (level >= TRIM_MEMORY_UI_HIDDEN) {
             coverBitmap = null
-            coverBitmapTrackKey = ""
-            coverContentUri = null
-            coverContentUriTrackKey = ""
             lastCoverUrl = ""
         }
     }
 
     override fun onDestroy() {
-        releasePlaybackLocksNow()
-        coverRequestSeq++
-        coverBitmapTrackKey = ""
-        coverContentUri = null
-        coverContentUriTrackKey = ""
-        lastCoverUrl = ""
-        if (instance === this) {
-            // Detached MediaBrowser results must always be completed, even if the service goes
-            // away before the WebView answers.
-            drainPendingBrowserResults()
-            instance = null
-        }
+        releaseWakeLock()
+        instance = null
+        browserBound = false
         try { unregisterReceiver(actionReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(bluetoothReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(audioBecomingNoisyReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(headsetReceiver) } catch (_: Exception) {}
         try { getSystemService(AudioManager::class.java).unregisterAudioDeviceCallback(audioRouteCallback) } catch (_: Exception) {}
+        try { getSystemService(AudioManager::class.java).unregisterAudioPlaybackCallback(navPromptCallback) } catch (_: Exception) {}
+        mainHandler.removeCallbacks(navUnduckRunnable)
         getSharedPreferences("spotilol_prefs", MODE_PRIVATE)
             .unregisterOnSharedPreferenceChangeListener(prefsListener)
         if (::mediaSession.isInitialized) {
@@ -699,9 +630,6 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         } catch (_: Exception) {}
         val ctx = applicationContext
         widgetScope.launch { runCatching { WidgetUpdater.push(ctx, WidgetState()) } }
-        // A WebView deliberately retained while no Activity owns the foreground UI belongs to
-        // this service. If the service itself ends (including SwipeStop), do not leak that player.
-        SpotifyWebViewSession.destroyIfDetached()
         super.onDestroy()
     }
 
@@ -735,45 +663,6 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     }
 
     private inner class MediaSessionCallback : MediaSessionCompat.Callback() {
-        /**
-         * Dedicated hardware media keys are handled explicitly so Bluetooth/wired devices do not
-         * depend on vendor-specific toggle inference. The ambiguous PLAY_PAUSE/HEADSETHOOK keys
-         * deliberately stay with MediaSessionCompat/framework handling, which preserves Android's
-         * normal single/double-tap semantics on our minSdk (28+).
-         */
-        override fun onMediaButtonEvent(mediaButtonEvent: Intent): Boolean {
-            val event = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                mediaButtonEvent.getParcelableExtra(Intent.EXTRA_KEY_EVENT, KeyEvent::class.java)
-            } else {
-                @Suppress("DEPRECATION")
-                mediaButtonEvent.getParcelableExtra<KeyEvent>(Intent.EXTRA_KEY_EVENT)
-            } ?: return super.onMediaButtonEvent(mediaButtonEvent)
-
-            val dedicated = when (event.keyCode) {
-                KeyEvent.KEYCODE_MEDIA_PLAY,
-                KeyEvent.KEYCODE_MEDIA_PAUSE,
-                KeyEvent.KEYCODE_MEDIA_NEXT,
-                KeyEvent.KEYCODE_MEDIA_PREVIOUS,
-                KeyEvent.KEYCODE_MEDIA_STOP -> true
-                else -> false
-            }
-            if (!dedicated) return super.onMediaButtonEvent(mediaButtonEvent)
-
-            // A physical press produces DOWN + UP (and can produce repeated DOWN events when held).
-            // Execute once on the first DOWN and consume the rest of that same press.
-            if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount > 0) return true
-
-            btLog("media key: ${event.keyCode}")
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_MEDIA_PLAY -> requestPlaybackState(true)
-                KeyEvent.KEYCODE_MEDIA_PAUSE -> requestPlaybackState(false)
-                KeyEvent.KEYCODE_MEDIA_NEXT -> requestSkip(next = true)
-                KeyEvent.KEYCODE_MEDIA_PREVIOUS -> requestSkip(next = false)
-                KeyEvent.KEYCODE_MEDIA_STOP -> requestPlaybackState(false)
-            }
-            return true
-        }
-
         override fun onPrepare() {
             requestPlaybackState(true)
         }
@@ -782,20 +671,12 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             onPlayFromMediaId(mediaId, extras)
         }
 
-        override fun onPlay() {
-            requestPlaybackState(true)
+        override fun onPlayFromSearch(query: String?, extras: Bundle?) {
+            wakeAndRun(MediaSearch.playSearchScript(query))
         }
 
-        override fun onPlayFromSearch(query: String?, extras: Bundle?) {
-            val q = query?.trim().orEmpty()
-            if (q.isEmpty()) {
-                requestPlaybackState(true)
-                return
-            }
-            wakeAndRun(
-                "if(typeof window.playSearchResult==='function')" +
-                    "window.playSearchResult(${jsString(q)});"
-            )
+        override fun onPlay() {
+            requestPlaybackState(true)
         }
 
         override fun onPause() {
@@ -803,11 +684,11 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         }
 
         override fun onSkipToNext() {
-            requestSkip(next = true)
+            wakeAndRun("actSkipForward();")
         }
 
         override fun onSkipToPrevious() {
-            requestSkip(next = false)
+            wakeAndRun("actSkipBack();")
         }
 
         override fun onStop() {
@@ -827,12 +708,12 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         }
 
         override fun onPlayFromMediaId(mediaId: String?, extras: Bundle?) {
-            val id = mediaId?.takeIf { it.isNotBlank() } ?: return
             val context = lastActiveContextId
-            if (context != null) {
-                wakeAndRun("playFromUri(${jsString(id)}, ${jsString(context)});")
+            val safeId = jsString(mediaId)
+            if (context != null && mediaId != null) {
+                wakeAndRun("playFromUri($safeId, ${jsString(context)});")
             } else {
-                wakeAndRun("playFromUri(${jsString(id)});")
+                wakeAndRun("playFromUri($safeId);")
             }
         }
     }
@@ -846,49 +727,35 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             addAction(ACTION_REPEAT)
             addAction(ACTION_FAVORITE)
             addAction(ACTION_WIDGET_REFRESH)
+            addAction(Intent.ACTION_MEDIA_BUTTON)
         }
-        ContextCompat.registerReceiver(
-            this,
-            actionReceiver,
-            filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(actionReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(actionReceiver, filter)
+        }
     }
 
     private fun registerDisconnectReceivers() {
         val noisyFilter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(audioBecomingNoisyReceiver, noisyFilter, RECEIVER_EXPORTED)
-            } else {
-                registerReceiver(audioBecomingNoisyReceiver, noisyFilter)
-            }
-        } catch (e: Exception) {
-            Logger.e(TAG, "Failed to register audio-becoming-noisy receiver", e)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(audioBecomingNoisyReceiver, noisyFilter, RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(audioBecomingNoisyReceiver, noisyFilter)
         }
 
         val btFilter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
             addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
         }
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                registerReceiver(bluetoothReceiver, btFilter, RECEIVER_EXPORTED)
-            } else {
-                registerReceiver(bluetoothReceiver, btFilter)
-            }
-        } catch (e: Exception) {
-            // BLUETOOTH_CONNECT can be denied on modern Android. Wired/noisy routing must still
-            // keep working even if this optional receiver cannot be registered.
-            Logger.e(TAG, "Failed to register Bluetooth receiver", e)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(bluetoothReceiver, btFilter, RECEIVER_EXPORTED)
+        } else {
+            registerReceiver(bluetoothReceiver, btFilter)
         }
 
         val hsFilter = IntentFilter(Intent.ACTION_HEADSET_PLUG)
-        try {
-            ContextCompat.registerReceiver(this, headsetReceiver, hsFilter, ContextCompat.RECEIVER_EXPORTED)
-        } catch (e: Exception) {
-            Logger.e(TAG, "Failed to register headset receiver", e)
-        }
+        ContextCompat.registerReceiver(this, headsetReceiver, hsFilter, ContextCompat.RECEIVER_EXPORTED)
 
         try {
             val am = getSystemService(AudioManager::class.java)
@@ -900,22 +767,43 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         }
     }
 
-    private fun dispatchPlaybackCommand(play: Boolean) {
-        if (::mediaSession.isInitialized) {
-            try {
-                if (play) mediaSession.controller.transportControls.play()
-                else mediaSession.controller.transportControls.pause()
-                return
-            } catch (e: Exception) {
-                Logger.e(TAG, "Failed to dispatch playback command through MediaSession", e)
+    private var navDucked = false
+    private val navUnduckRunnable = Runnable { setWebDuck(false) }
+
+    private val navPromptCallback = object : AudioManager.AudioPlaybackCallback() {
+        override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>?) {
+            val promptActive = configs?.any { isPromptUsage(it.audioAttributes?.usage) } == true
+            if (promptActive) {
+                mainHandler.removeCallbacks(navUnduckRunnable)
+                if (!navDucked) {
+                    navDucked = true
+                    setWebDuck(true)
+                }
+            } else if (navDucked) {
+                navDucked = false
+                mainHandler.removeCallbacks(navUnduckRunnable)
+                mainHandler.postDelayed(navUnduckRunnable, 700L)
             }
         }
-        requestPlaybackState(play)
+    }
+
+    private fun isPromptUsage(usage: Int?): Boolean =
+        usage == AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE ||
+            usage == AudioAttributes.USAGE_ASSISTANT
+
+    private fun setWebDuck(on: Boolean) {
+        val wv = webView ?: return
+        try {
+            wv.evaluateJavascript("window.__splDuck&&window.__splDuck($on);", null)
+        } catch (e: Exception) {
+            Logger.e(TAG, "setWebDuck failed", e)
+        }
     }
 
     private fun requestPlaybackState(play: Boolean) {
-        // Queue exactly one JS command. PlaybackControls owns verification/retry.
-        if (!wakeAndRun("actPlayPause($play);")) return
+        // Exactly one path to the real Spotify Web player. Never call transportControls
+        // and evaluateJavascript for the same button press: callback would issue it twice.
+        wakeAndRun("actPlayPause($play);")
         if (isPlaying == play) return
         isPlaying = play
         updatePlaybackState()
@@ -923,30 +811,26 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         pushWidgetState(force = true)
     }
 
-    private fun dispatchSkipCommand(next: Boolean) {
-        if (::mediaSession.isInitialized) {
-            try {
-                if (next) mediaSession.controller.transportControls.skipToNext()
-                else mediaSession.controller.transportControls.skipToPrevious()
-                return
-            } catch (e: Exception) {
-                Logger.e(TAG, "Failed to dispatch skip command through MediaSession", e)
-            }
+    private fun pausePlayback() = requestPlaybackState(false)
+
+    private fun resumePlayback() = requestPlaybackState(true)
+
+    // Media status can arrive every second even when all metadata is unchanged. SystemUI
+    // animates positions from PlaybackState automatically; only refresh its anchor on
+    // meaningful state changes / large seeks, not on each WebView progress poll.
+    private var lastStateKey = ""
+    private var lastStatePosition = -1L
+    private var lastMetadataKey = ""
+    private val wakeLockGuard = object : Runnable {
+        override fun run() {
+            if (!isPlaying) return
+            acquireWakeLock()
+            mainHandler.postDelayed(this, 30_000L)
         }
-        requestSkip(next)
     }
-
-    private fun requestSkip(next: Boolean) {
-        wakeAndRun(if (next) "actSkipForward();" else "actSkipBack();")
-    }
-
-    private fun pausePlayback() {
-        dispatchPlaybackCommand(false)
-    }
-
-    private fun resumePlayback() {
-        dispatchPlaybackCommand(true)
-    }
+    private var coverRequestSeq = 0L
+    private var appliedCoverUrl = ""
+    private var currentArtUri: Uri? = null
 
     fun updateFromMediaStatus(json: String) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
@@ -956,60 +840,26 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         try {
             lastMediaStatusJson = json
             val obj = org.json.JSONObject(json)
+            val previousTrackKey = "$currentTitle\u0001$currentArtist\u0001$currentAlbum"
             currentTitle = obj.optString("track", "")
             currentArtist = obj.optString("artist", "")
             currentAlbum = obj.optString("album", "")
-            val coverUrl = obj.optString("cover", "")
-            val coverTrackKey = currentCoverTrackKey()
-            val hasCoverUrl = coverUrl.isNotEmpty() && coverUrl != "null"
-            Logger.i(
-                ART_TAG,
-                "status track=${currentTitle.take(48)} cover=${if (hasCoverUrl) coverUrl.take(140) else "<empty>"} bitmap=${coverBitmap?.let { "${it.width}x${it.height}" } ?: "none"}"
-            )
-
-            if (hasCoverUrl) {
-                if (coverUrl == lastCoverUrl && coverBitmap != null && coverBitmapTrackKey == coverTrackKey) {
-                    // Same artwork (common inside one album): reuse the decoded bitmap immediately.
-                    coverRequestSeq++
-                    coverBitmapTrackKey = coverTrackKey
-                    artworkPublishPending = false
-                } else {
-                    // Do not publish a new track with the previous track's image (or with no image)
-                    // and then try to patch artwork in a second metadata event. Vivo deduplicates
-                    // artwork-only metadata changes once title/artist/duration are already equal.
-                    artworkPublishPending = true
-                    if (coverUrl != lastCoverUrl || coverBitmap == null || coverBitmapTrackKey != coverTrackKey) {
-                        val requestSeq = ++coverRequestSeq
-                        lastCoverUrl = coverUrl
-                        loadCoverArt(coverUrl, coverTrackKey, requestSeq)
-                    }
-                }
-            } else if (coverBitmap != null && coverBitmapTrackKey == coverTrackKey) {
-                // A transient DOM miss for the same track must not hide artwork that is already
-                // correct for this track.
-                artworkPublishPending = false
-            } else {
-                // Spotify often publishes title/artist a fraction of a second before its cover DOM
-                // is mounted. Hold externally-visible metadata until artwork appears or grace expires.
-                artworkPublishPending = true
+            val trackKey = "$currentTitle\u0001$currentArtist\u0001$currentAlbum"
+            val trackChanged = previousTrackKey != trackKey
+            val url = obj.optString("cover", "").takeUnless { it == "null" }.orEmpty()
+            val isValidCover = url.startsWith("https://", ignoreCase = true)
+            if (isValidCover && (url != lastCoverUrl || (trackChanged && coverBitmap == null))) {
+                lastCoverUrl = url
+                appliedCoverUrl = ""
+                currentArtUri = null
+                coverBitmap = null
+                loadCoverArt(url, trackKey, ++coverRequestSeq)
+            } else if (!isValidCover && trackChanged) {
                 lastCoverUrl = ""
-                val requestSeq = ++coverRequestSeq
-                mainHandler.postDelayed({
-                    if (
-                        instance === this &&
-                        requestSeq == coverRequestSeq &&
-                        currentCoverTrackKey() == coverTrackKey &&
-                        lastCoverUrl.isEmpty() &&
-                        coverBitmapTrackKey != coverTrackKey
-                    ) {
-                        coverBitmap = null
-                        coverBitmapTrackKey = ""
-                        coverContentUri = null
-                        coverContentUriTrackKey = ""
-                        artworkPublishPending = false
-                        publishMediaSurfaces("no-art-fallback")
-                    }
-                }, COVER_TRANSITION_GRACE_MS)
+                appliedCoverUrl = ""
+                currentArtUri = null
+                coverBitmap = null
+                ++coverRequestSeq
             }
 
             isPlaying = obj.optBoolean("playing", false)
@@ -1022,19 +872,36 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             currentDuration = obj.optLong("duration", 0L)
             currentPosition = obj.optLong("position", 0L)
 
-            if (isPlaying) acquirePlaybackLocks() else schedulePlaybackLocksRelease()
-
-            updatePlaybackState()
-            if (artworkPublishPending) {
-                Logger.i(
-                    ART_TAG,
-                    "metadata publish deferred reason=await-art track=${currentTitle.take(48)} artKeyMatch=${coverBitmapTrackKey == coverTrackKey}"
-                )
+            if (isPlaying) {
+                acquireWakeLock()
+                mainHandler.removeCallbacks(wakeLockGuard)
+                mainHandler.postDelayed(wakeLockGuard, 30_000L)
             } else {
-                publishMediaSurfaces("status-ready")
+                mainHandler.removeCallbacks(wakeLockGuard)
+                releaseWakeLock()
+            }
+            val stateKey = "$isPlaying|$isFavorite|$isShuffle|$isSmartShuffle|$isShuffleAvailable|$isRepeat"
+            val stateChanged = stateKey != lastStateKey
+            if (stateChanged || lastStatePosition < 0 ||
+                kotlin.math.abs(currentPosition - lastStatePosition) >= 10_000L) {
+                updatePlaybackState()
+                lastStatePosition = currentPosition
+                lastStateKey = stateKey
+            }
+            val metadataKey = "$trackKey\u0001$currentDuration\u0001$lastCoverUrl\u0001$appliedCoverUrl"
+            val metadataChanged = metadataKey != lastMetadataKey
+            if (metadataChanged) {
+                updateMetadata()
+                lastMetadataKey = metadataKey
+            }
+            if (metadataChanged || stateChanged) {
+                showNotification()
+                pushWidgetState(force = true)
+            } else {
+                pushWidgetState()
             }
         } catch (e: Exception) {
-            Logger.e(ART_TAG, "media status apply failed: ${e.message}", e)
+            Logger.e(TAG, "Failed to apply media status", e)
         }
     }
 
@@ -1044,7 +911,11 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             return
         }
         currentPosition = position
-        updatePlaybackState()
+        if (isPlaying) acquireWakeLock()
+        if (lastStatePosition < 0 || kotlin.math.abs(position - lastStatePosition) >= 10_000L) {
+            updatePlaybackState()
+            lastStatePosition = position
+        }
         pushWidgetState()
     }
 
@@ -1067,7 +938,6 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             repeat = isRepeat,
             position = currentPosition,
             duration = currentDuration,
-            accent = accent(),
             source = WidgetState.SOURCE_WEB,
             cover = coverBitmap
         )
@@ -1123,99 +993,36 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         }
     }
 
-    private fun currentCoverTrackKey(): String =
-        "$currentTitle\u0001$currentArtist\u0001$currentAlbum"
-
-    private fun publishMediaSurfaces(reason: String) {
-        Logger.i(
-            ART_TAG,
-            "metadata publish reason=$reason track=${currentTitle.take(48)} artKeyMatch=${coverBitmapTrackKey == currentCoverTrackKey()} bitmap=${coverBitmap?.let { "${it.width}x${it.height}" } ?: "none"}"
-        )
-        updateMetadata()
-        showNotification()
-        pushWidgetState(force = true)
-    }
-
     private fun updateMetadata() {
-        if (artworkPublishPending && currentTitle.isNotBlank()) {
-            Logger.i(ART_TAG, "MediaSession metadata deferred pending-art track=${currentTitle.take(48)}")
-            return
-        }
-
-        val metadataTrackKey = currentCoverTrackKey()
-        val currentArt = coverBitmap?.takeIf { coverBitmapTrackKey == metadataTrackKey }
+        val artwork = coverBitmap?.takeIf { appliedCoverUrl == lastCoverUrl }
         val builder = MediaMetadataCompat.Builder()
             .putString(MediaMetadataCompat.METADATA_KEY_TITLE, currentTitle)
             .putString(MediaMetadataCompat.METADATA_KEY_ARTIST, currentArtist)
             .putString(MediaMetadataCompat.METADATA_KEY_ALBUM, currentAlbum)
             .putLong(MediaMetadataCompat.METADATA_KEY_DURATION, currentDuration)
-
-        // Official Spotify exposes a resolver-readable content:// ALBUM_ART_URI alongside its
-        // bitmap artwork. Keep island9/10 bitmap behavior unchanged and add only that one URI path.
-        val contentArtUri = coverContentUri?.takeIf { coverContentUriTrackKey == metadataTrackKey }
-        contentArtUri?.let {
-            builder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI, it.toString())
+        // Vivo's SpotifyController consumes this custom URL via Glide, not the bitmap URI.
+        if (lastCoverUrl.startsWith("https://", ignoreCase = true)) {
+            builder.putString("com.spotify.music.extra.ART_HTTPS_URI", lastCoverUrl)
         }
-
-        // Vivo's Spotify-specific controller reads this exact custom key and downloads the
-        // artwork itself. Publish only the HTTPS URL that produced the bitmap for this track.
-        val artHttpsUri = lastCoverUrl.takeIf {
-            currentArt != null && it.startsWith("https://", ignoreCase = true)
+        currentArtUri?.let { builder.putString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI, it.toString()) }
+        artwork?.let { bmp ->
+            val sessionArt = if (bmp.width > 256 || bmp.height > 256) {
+                Bitmap.createScaledBitmap(bmp, 256, 256, true)
+            } else bmp
+            val icon = if (sessionArt.width > 128 || sessionArt.height > 128) {
+                Bitmap.createScaledBitmap(sessionArt, 128, 128, true)
+            } else sessionArt
+            builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, sessionArt)
+            builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, sessionArt)
+            builder.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, icon)
         }
-        artHttpsUri?.let {
-            builder.putString("com.spotify.music.extra.ART_HTTPS_URI", it)
-        }
-
-        // Keep the existing island11 bitmap/content URI paths unchanged.
-        // DISPLAY_ICON/URI over ART/ALBUM_ART and expect a ContentResolver-readable URI.
-        // Give Vivo an explicit small bitmap in the highest-priority display-art key instead.
-        val displayIcon = currentArt?.let { bitmapForMaxSide(it, MEDIA_SESSION_DISPLAY_ICON_MAX_PX) }
-        displayIcon?.let { builder.putBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON, it) }
-
-        // Keep the full-size bitmap for NotificationCompat.setLargeIcon(), but use a bounded copy
-        // for MediaSession metadata so OEM media renderers stay under Binder transaction limits.
-        val sessionArt = currentArt?.let { bitmapForMaxSide(it, MEDIA_SESSION_ART_MAX_PX) }
-        sessionArt?.let { bmp ->
-            builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART, bmp)
-            builder.putBitmap(MediaMetadataCompat.METADATA_KEY_ART, bmp)
-        }
-
         if (::mediaSession.isInitialized) {
-            try {
-                val metadata = builder.build()
-                mediaSession.setMetadata(metadata)
-                val echoedMetadata = mediaSession.controller.metadata
-                val echoed = echoedMetadata
-                    ?.getBitmap(MediaMetadataCompat.METADATA_KEY_ALBUM_ART)
-                val echoedDisplay = echoedMetadata
-                    ?.getBitmap(MediaMetadataCompat.METADATA_KEY_DISPLAY_ICON)
-                val description = echoedMetadata?.description
-                val descriptionIcon = description?.iconBitmap
-                val descriptionIconUri = description?.iconUri
-                val echoedAlbumArtUri = echoedMetadata
-                    ?.getString(MediaMetadataCompat.METADATA_KEY_ALBUM_ART_URI)
-                val echoedArtHttpsUri = echoedMetadata
-                    ?.getString("com.spotify.music.extra.ART_HTTPS_URI")
-                Logger.i(
-                    ART_TAG,
-                    "MediaSession metadata set art=${sessionArt?.let { "${it.width}x${it.height}" } ?: "none"} display=${displayIcon?.let { "${it.width}x${it.height}" } ?: "none"} contentUri=${contentArtUri ?: "none"} artHttpsUri=${artHttpsUri?.take(120) ?: "none"} echoedArt=${echoed?.let { "${it.width}x${it.height}" } ?: "none"} echoedDisplay=${echoedDisplay?.let { "${it.width}x${it.height}" } ?: "none"} echoedAlbumUri=${echoedAlbumArtUri ?: "none"} echoedArtHttpsUri=${echoedArtHttpsUri?.take(120) ?: "none"} descIcon=${descriptionIcon?.let { "${it.width}x${it.height}" } ?: "none"} descUri=${descriptionIconUri ?: "none"}"
-                )
-            } catch (e: Exception) {
-                Logger.e(ART_TAG, "MediaSession setMetadata failed: ${e.javaClass.simpleName}: ${e.message}", e)
-            }
+            try { mediaSession.setMetadata(builder.build()) }
+            catch (e: Exception) { Logger.e(TAG, "MediaSession metadata update failed", e) }
         }
     }
 
-    private fun bitmapForMaxSide(source: Bitmap, maxPx: Int): Bitmap {
-        val maxSide = maxOf(source.width, source.height)
-        if (maxSide <= maxPx) return source
-        val scale = maxPx.toFloat() / maxSide.toFloat()
-        val width = (source.width * scale).toInt().coerceAtLeast(1)
-        val height = (source.height * scale).toInt().coerceAtLeast(1)
-        return Bitmap.createScaledBitmap(source, width, height, true)
-    }
-
-    private fun loadCoverArt(url: String, trackKey: String, requestSeq: Long) {
+    private fun loadCoverArt(url: String, trackKey: String, requestId: Long) {
         Thread {
             var conn: HttpURLConnection? = null
             try {
@@ -1223,75 +1030,37 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
                 conn.instanceFollowRedirects = true
                 conn.connectTimeout = 5000
                 conn.readTimeout = 5000
-                conn.setRequestProperty("User-Agent", COVER_USER_AGENT)
                 conn.setRequestProperty("Referer", "https://open.spotify.com/")
-                conn.setRequestProperty("Accept", "image/avif,image/webp,image/apng,image/*,*/*;q=0.8")
-                conn.setRequestProperty("Accept-Language", "en-US,en;q=0.9")
                 conn.connect()
-                val code = conn.responseCode
-                Logger.i(
-                    ART_TAG,
-                    "HTTP $code type=${conn.contentType ?: "?"} length=${conn.contentLengthLong} url=${url.take(120)}"
-                )
-                if (code !in 200..299) {
-                    throw IllegalStateException("Cover HTTP $code")
-                }
+                if (conn.responseCode !in 200..299) throw IllegalStateException("Art HTTP ${conn.responseCode}")
                 val raw = conn.inputStream.use { BitmapFactory.decodeStream(it) }
-                    ?: throw IllegalStateException("Cover decode returned null")
-                val target = 512
-                val scale = min(target.toFloat() / raw.width, target.toFloat() / raw.height)
-                val w = (raw.width * scale).toInt().coerceAtLeast(1)
-                val h = (raw.height * scale).toInt().coerceAtLeast(1)
-                val scaled = Bitmap.createScaledBitmap(raw, w, h, true)
-                Logger.i(ART_TAG, "decoded ${raw.width}x${raw.height} -> ${scaled.width}x${scaled.height}")
-                if (scaled != raw) raw.recycle()
-
-                val contentUri = runCatching {
+                    ?: throw IllegalStateException("Cover art decode failed")
+                val factor = min(512f / raw.width, 512f / raw.height).coerceAtMost(1f)
+                val scaled = if (factor < 1f) {
+                    Bitmap.createScaledBitmap(raw, (raw.width * factor).toInt().coerceAtLeast(1),
+                        (raw.height * factor).toInt().coerceAtLeast(1), true)
+                } else raw
+                if (scaled !== raw) raw.recycle()
+                val uri = runCatching {
                     SpotifyArtworkProvider.publish(applicationContext, scaled, url)
-                }.onFailure {
-                    Logger.e(ART_TAG, "content artwork publish failed: ${it.javaClass.simpleName}: ${it.message}", it)
-                }.getOrNull()
-
+                }.onFailure { Logger.w(TAG, "Artwork URI publication failed: ${it.message}") }.getOrNull()
                 mainHandler.post {
-                    // A cover fetch can finish after another track has already won the race.
-                    if (
-                        instance !== this ||
-                        requestSeq != coverRequestSeq ||
-                        url != lastCoverUrl ||
-                        trackKey != currentCoverTrackKey()
-                    ) {
+                    val liveKey = "$currentTitle\u0001$currentArtist\u0001$currentAlbum"
+                    if (instance !== this || requestId != coverRequestSeq ||
+                        url != lastCoverUrl || liveKey != trackKey) {
                         if (!scaled.isRecycled) scaled.recycle()
                         return@post
                     }
                     coverBitmap = scaled
-                    coverBitmapTrackKey = trackKey
-                    coverContentUri = contentUri
-                    coverContentUriTrackKey = if (contentUri != null) trackKey else ""
-                    artworkPublishPending = false
-                    Logger.i(
-                        ART_TAG,
-                        "bitmap applied ${scaled.width}x${scaled.height} contentUri=${contentUri ?: "none"} track=${currentTitle.take(48)}"
-                    )
-                    publishMediaSurfaces("art-ready")
+                    appliedCoverUrl = url
+                    currentArtUri = uri
+                    updateMetadata()
+                    lastMetadataKey = "$liveKey\u0001$currentDuration\u0001$lastCoverUrl\u0001$appliedCoverUrl"
+                    showNotification()
+                    pushWidgetState(force = true)
                 }
             } catch (e: Exception) {
-                Logger.w(TAG, "Cover art load failed: ${e.message}")
-                mainHandler.post {
-                    if (
-                        instance === this &&
-                        requestSeq == coverRequestSeq &&
-                        url == lastCoverUrl &&
-                        trackKey == currentCoverTrackKey() &&
-                        coverBitmapTrackKey != trackKey
-                    ) {
-                        coverBitmap = null
-                        coverBitmapTrackKey = ""
-                        coverContentUri = null
-                        coverContentUriTrackKey = ""
-                        artworkPublishPending = false
-                        publishMediaSurfaces("load-fallback")
-                    }
-                }
+                Logger.w(TAG, "Cover art load failed: ${e.javaClass.simpleName}: ${e.message}")
             } finally {
                 runCatching { conn?.disconnect() }
             }
@@ -1299,12 +1068,8 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
     }
 
     private fun showNotification() {
-        if (artworkPublishPending && currentTitle.isNotBlank()) {
-            Logger.i(ART_TAG, "notification deferred pending-art track=${currentTitle.take(48)}")
-            return
-        }
         val nm = getSystemService(NotificationManager::class.java)
-        nm.notify(NOTIFICATION_ID, buildNotificationSafe())
+        nm.notify(NOTIFICATION_ID, buildNotification())
     }
 
     private fun buildNotificationSafe(): Notification {
@@ -1320,15 +1085,10 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
         }
     }
 
-    private fun buildMediaStyle(@Suppress("UNUSED_PARAMETER") showShuffle: Boolean): MediaStyle {
-        // Android MediaStyle supports at most three compact actions. Shuffle/favorite remain
-        // available in the expanded notification exactly as before.
-        val compact = intArrayOf(0, 1, 2)
+    private fun buildMediaStyle(showShuffle: Boolean): MediaStyle {
+        val compact = if (showShuffle) intArrayOf(0, 1, 2, 3) else intArrayOf(0, 1, 2)
         val style = MediaStyle()
             .setShowActionsInCompactView(*compact)
-            .setShowCancelButton(true)
-            // A cancel/close affordance must never toggle a paused player back to playing.
-            .setCancelButtonIntent(getActionPendingIntent(ACTION_PAUSE))
         if (::mediaSession.isInitialized) {
             style.setMediaSession(mediaSession.sessionToken)
         }
@@ -1399,54 +1159,26 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             .setStyle(buildMediaStyle(isShuffleAvailable))
         actions.forEach { builder.addAction(it) }
 
-        val notificationArt = coverBitmap?.takeIf { coverBitmapTrackKey == currentCoverTrackKey() }
-        notificationArt?.let { builder.setLargeIcon(it) }
-        Logger.i(
-            ART_TAG,
-            "notification build largeIcon=${notificationArt?.let { "${it.width}x${it.height}" } ?: "none"} track=${currentTitle.take(48)} artKeyMatch=${coverBitmapTrackKey == currentCoverTrackKey()}"
-        )
+        coverBitmap?.let { builder.setLargeIcon(it) }
 
         return builder.build()
     }
 
     private fun getActionPendingIntent(action: String): PendingIntent {
-        val intent = Intent(this, MediaNotificationService::class.java).setAction(action)
-        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            PendingIntent.getForegroundService(this, action.hashCode(), intent, flags)
-        } else {
-            PendingIntent.getService(this, action.hashCode(), intent, flags)
+        val mediaButtonAction = when (action) {
+            ACTION_PLAY_PAUSE -> PlaybackStateCompat.ACTION_PLAY_PAUSE
+            ACTION_NEXT -> PlaybackStateCompat.ACTION_SKIP_TO_NEXT
+            ACTION_PREV -> PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS
+            else -> null
         }
-    }
-
-    /**
-     * Keep the playback engine alive only while audio is active.
-     *
-     * The old implementation acquired one timed WakeLock for exactly one hour and
-     * only checked whether the object reference was null. After the timeout expired
-     * the reference stayed non-null, so long sessions could silently lose CPU
-     * protection forever. We now renew a short bounded timeout while playback is healthy;
-     * it self-releases if the player/service state machine stops making progress.
-     */
-    private fun acquirePlaybackLocks() {
-        mainHandler.removeCallbacks(playbackLockReleaseRunnable)
-        acquireWakeLock()
-        acquireWifiLockIfNeeded()
-
-        mainHandler.removeCallbacks(playbackLockGuardRunnable)
-        mainHandler.postDelayed(playbackLockGuardRunnable, PLAYBACK_LOCK_GUARD_MS)
-    }
-
-    /**
-     * Spotify can briefly report `playing=false` between tracks while the next item
-     * is being prepared. Releasing the CPU/network locks at that exact moment makes
-     * a screen-off transition unnecessarily fragile, so give genuine transitions a
-     * short grace period. A confirmed new playing state cancels this release.
-     */
-    private fun schedulePlaybackLocksRelease() {
-        mainHandler.removeCallbacks(playbackLockGuardRunnable)
-        mainHandler.removeCallbacks(playbackLockReleaseRunnable)
-        mainHandler.postDelayed(playbackLockReleaseRunnable, PLAYBACK_LOCK_RELEASE_GRACE_MS)
+        if (mediaButtonAction != null) {
+            return MediaButtonReceiver.buildMediaButtonPendingIntent(this, mediaButtonAction)
+        }
+        val intent = Intent(action).setPackage(packageName)
+        return PendingIntent.getBroadcast(
+            this, action.hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 
     private fun acquireWakeLock() {
@@ -1454,126 +1186,30 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             var lock = wakeLock
             if (lock == null) {
                 val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
-                lock = pm.newWakeLock(
-                    PowerManager.PARTIAL_WAKE_LOCK,
-                    "spotilol:media_playback"
-                ).apply { setReferenceCounted(false) }
+                lock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "spotilol:media_playback")
+                    .apply { setReferenceCounted(false) }
                 wakeLock = lock
             }
-            // Refresh a bounded timeout on every guard pass. For a non-reference-counted
-            // WakeLock Android replaces the previous timeout, so this remains continuous while
-            // playback is healthy but still self-releases if our state machine dies unexpectedly.
-            lock.acquire(PLAYBACK_WAKE_LOCK_TIMEOUT_MS)
+            // Refresh bounded protection; reference can remain non-null after timeout.
+            if (!lock.isHeld) lock.acquire(120_000L)
         } catch (e: Exception) {
-            Logger.e(TAG, "Failed to acquire playback WakeLock", e)
-        }
-    }
-
-    private fun isWifiTransportActive(): Boolean {
-        return try {
-            val cm = getSystemService(ConnectivityManager::class.java)
-            val network = cm.activeNetwork ?: return false
-            cm.getNetworkCapabilities(network)
-                ?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun acquireWifiLockIfNeeded() {
-        if (!isWifiTransportActive()) {
-            releaseWifiLock()
-            return
-        }
-        try {
-            var lock = wifiLock
-            if (lock == null) {
-                val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-                lock = wm.createWifiLock(
-                    WifiManager.WIFI_MODE_FULL_HIGH_PERF,
-                    "spotilol:media_wifi"
-                ).apply { setReferenceCounted(false) }
-                wifiLock = lock
-            }
-            if (!lock.isHeld) lock.acquire()
-        } catch (e: Exception) {
-            Logger.e(TAG, "Failed to acquire playback WifiLock", e)
+            Logger.e(TAG, "Failed to acquire media WakeLock", e)
         }
     }
 
     private fun releaseWakeLock() {
         wakeLock?.let {
-            try { if (it.isHeld) it.release() } catch (_: Exception) {}
+            if (it.isHeld) it.release()
+            wakeLock = null
         }
-        wakeLock = null
-    }
-
-    private fun releaseWifiLock() {
-        wifiLock?.let {
-            try { if (it.isHeld) it.release() } catch (_: Exception) {}
-        }
-        wifiLock = null
-    }
-
-    private fun releasePlaybackLocksNow() {
-        mainHandler.removeCallbacks(playbackLockReleaseRunnable)
-        mainHandler.removeCallbacks(playbackLockGuardRunnable)
-        releaseWakeLock()
-        releaseWifiLock()
-    }
-
-    /** Called by the existing JS bridge wake hooks around transport actions. */
-    fun keepPlaybackAwake() {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post { keepPlaybackAwake() }
-            return
-        }
-        val alreadyPlaying = isPlaying
-        acquirePlaybackLocks()
-        // A transport command can call wakeUp before Spotify has reported playing=true.
-        // Do not leak a lock forever if that command fails or the WebView disappears.
-        if (!alreadyPlaying) {
-            mainHandler.removeCallbacks(playbackLockReleaseRunnable)
-            mainHandler.postDelayed(playbackLockReleaseRunnable, PLAYBACK_COMMAND_LOCK_TIMEOUT_MS)
-        }
-    }
-
-    /** Pair for [keepPlaybackAwake]; only releases after the normal transition grace. */
-    fun allowPlaybackSleep() {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post { allowPlaybackSleep() }
-            return
-        }
-        if (!isPlaying) schedulePlaybackLocksRelease()
-    }
-
-    /**
-     * The Spotify renderer is the actual playback engine. If it dies, keeping an active
-     * MediaSession/foreground notification and CPU/network locks would advertise a player that
-     * no longer exists and can drain battery indefinitely. Shut only the media shell down; a
-     * future MainActivity/WebView can start a fresh service normally.
-     */
-    fun onPlaybackEngineLost(reason: String) {
-        if (Looper.myLooper() != Looper.getMainLooper()) {
-            mainHandler.post { onPlaybackEngineLost(reason) }
-            return
-        }
-        Logger.w(TAG, "playback engine lost: $reason")
-        isPlaying = false
-        releasePlaybackLocksNow()
-        if (::mediaSession.isInitialized) {
-            try { updatePlaybackState() } catch (_: Exception) {}
-            try { mediaSession.isActive = false } catch (_: Exception) {}
-        }
-        try {
-            getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
-        } catch (_: Exception) {}
-        try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
-        stopSelf()
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        if (browserBound) {
+            Logger.i(TAG, "task removed, keeping service and webview for the bound media browser client")
+            super.onTaskRemoved(rootIntent)
+            return
+        }
         val stopOnSwipe = getSharedPreferences("spotilol_prefs", MODE_PRIVATE)
             .getBoolean("SwipeStop", true)
         if (stopOnSwipe) {
@@ -1581,14 +1217,26 @@ class MediaNotificationService : MediaBrowserServiceCompat() {
             if (::mediaSession.isInitialized) {
                 try { mediaSession.isActive = false } catch (_: Exception) {}
             }
-            releasePlaybackLocksNow()
+            releaseWakeLock()
             try {
                 getSystemService(NotificationManager::class.java)
                     .cancel(NOTIFICATION_ID)
             } catch (_: Exception) {}
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
+            mainHandler.postDelayed({ releaseWebViewAfterTaskRemoved() }, 500)
         }
         super.onTaskRemoved(rootIntent)
+    }
+
+    private fun releaseWebViewAfterTaskRemoved() {
+        if (browserBound) return
+        if (com.project.lol.webview.WebViewHost.uiHost != null) return
+        Logger.i(TAG, "task removed, releasing webview")
+        com.project.lol.webview.WebViewHost.release()
+    }
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocale.wrap(newBase))
     }
 }

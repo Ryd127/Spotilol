@@ -6,72 +6,60 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
-// The public/source archive intentionally does not contain Firebase credentials or the
-// author's signing key. Keep the official integrations when those private files are present,
-// but do not make a clean checkout impossible to build without them.
-val firebaseConfigPresent = file("google-services.json").isFile
-if (firebaseConfigPresent) {
-    apply(plugin = "com.google.gms.google-services")
-    apply(plugin = "com.google.firebase.crashlytics")
-}
-
 val keystorePropertiesFile = rootProject.file("keystore/keystore.properties")
 val keystoreProperties = Properties().apply {
-    if (keystorePropertiesFile.isFile) {
+    if (keystorePropertiesFile.exists()) {
         keystorePropertiesFile.inputStream().use { load(it) }
     }
 }
-val releaseKeystoreFile = keystoreProperties.getProperty("storeFile")
-    ?.takeIf { it.isNotBlank() }
-    ?.let { rootProject.file("keystore/$it") }
-val releaseSigningConfigured =
-    keystorePropertiesFile.isFile &&
-        releaseKeystoreFile?.isFile == true &&
-        !keystoreProperties.getProperty("storePassword").isNullOrBlank() &&
-        !keystoreProperties.getProperty("keyAlias").isNullOrBlank() &&
-        !keystoreProperties.getProperty("keyPassword").isNullOrBlank()
+
 
 android {
     namespace = "com.project.lol"
     compileSdk = 37
-    // AGP 9.4's default NDK. r28+ produces 16 KiB-compatible native libraries by default.
-    ndkVersion = "28.2.13676358"
 
     defaultConfig {
-        applicationId = "com.spotify.music"
+        applicationId = "com.project.lol"
         minSdk = 28
         targetSdk = 36
-        versionCode = 30
-        versionName = "1.1.10-island12"
-        buildConfigField("boolean", "FIREBASE_ENABLED", firebaseConfigPresent.toString())
+        versionCode = 45
+        versionName = "1.2.4-native15"
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
     }
 
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+    packaging {
+        jniLibs {
+            pickFirsts += setOf(
+                "**/libandroidx.graphics.path.so",
+                "**/libdatastore_shared_counter.so"
+            )
+        }
+    }
     buildFeatures {
         compose = true
         buildConfig = true
     }
 
     signingConfigs {
-        if (releaseSigningConfigured) {
-            create("release") {
-                storeFile = releaseKeystoreFile
-                storePassword = keystoreProperties.getProperty("storePassword")
-                keyAlias = keystoreProperties.getProperty("keyAlias")
-                keyPassword = keystoreProperties.getProperty("keyPassword")
-            }
+        create("release") {
+            storeFile = rootProject.file("keystore/${keystoreProperties.getProperty("storeFile")}")
+            storePassword = keystoreProperties.getProperty("storePassword")
+            keyAlias = keystoreProperties.getProperty("keyAlias")
+            keyPassword = keystoreProperties.getProperty("keyPassword")
         }
     }
 
     buildTypes {
-        debug {
-        }
         release {
-            if (releaseSigningConfigured) {
-                signingConfig = signingConfigs.getByName("release")
-            }
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
@@ -85,28 +73,11 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
-    externalNativeBuild {
-        cmake {
-            path = file("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
-
-    packaging {
-        jniLibs {
-            // Prefer the app-local, API-compatible rebuilds over the copies bundled
-            // by AndroidX AARs. They preserve the same SONAME/JNI surface while
-            // adding complete 16 KiB LOAD + RELRO alignment.
-            pickFirsts += setOf(
-                "**/libandroidx.graphics.path.so",
-                "**/libdatastore_shared_counter.so"
-            )
-        }
-    }
 }
 
 dependencies {
+    implementation(libs.androidx.datastore)
+    testImplementation("junit:junit:4.13.2")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
@@ -144,10 +115,6 @@ dependencies {
     implementation(libs.glance.appwidget)
     implementation(libs.glance.material3)
 
-    // Keep transitive AndroidX DataStore on the current stable line. Older 1.1.x
-    // artifacts package libdatastore_shared_counter.so with non-16-KiB RELRO.
-    implementation(libs.androidx.datastore)
-
     // Ktor + serialization (YouTube InnerTube client)
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.okhttp)
@@ -167,6 +134,4 @@ dependencies {
 
     // Core library desugaring (required by NewPipeExtractor)
     coreLibraryDesugaring(libs.desugaring)
-
-    testImplementation("junit:junit:4.13.2")
 }

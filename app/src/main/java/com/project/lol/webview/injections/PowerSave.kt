@@ -12,9 +12,7 @@ object PowerSave {
 
             var videoObs = null;
             var psStyle = null;
-            var psDomReadyHandler = null;
-            var savedSI = null;
-            var psIntervalWrapper = null;
+            var origSI = null;
 
             function isCanvasVideo(v){
                 try{
@@ -96,36 +94,22 @@ object PowerSave {
                     psStyle = document.createElement('style');
                     psStyle.id = 'spl-power-save';
                     psStyle.textContent = '[data-testid=canvas-container],[data-testid=canvas],[class*=CanvasPlayer],[class*=CanvasVideo]{display:none!important}';
-                    psDomReadyHandler = function(){
+                    function appendStyle(){
                         var t = document.head || document.documentElement;
-                        if(t && psStyle && !document.getElementById('spl-power-save')) t.appendChild(psStyle);
-                    };
-                    psDomReadyHandler();
-                    document.addEventListener('DOMContentLoaded', psDomReadyHandler);
+                        if(t && !document.getElementById('spl-power-save')) t.appendChild(psStyle);
+                    }
+                    appendStyle();
+                    document.addEventListener('DOMContentLoaded', appendStyle);
 
-                    /*
-                     * Never throttle arbitrary Spotify timers. Capture the CURRENT delegate when
-                     * Power Save is enabled (Spotify may have wrapped setInterval after document
-                     * start), pass all non-Spotilol callbacks through untouched, and restore that
-                     * exact function later. This avoids bypassing or clobbering Spotify internals.
-                     */
-                    savedSI = window.setInterval;
-                    var delegateSI = savedSI;
-                    psIntervalWrapper = function(fn, delay){
-                        var owned = false;
-                        try {
-                            var src = (typeof fn === 'function')
-                                ? Function.prototype.toString.call(fn) : String(fn || '');
-                            owned = /__spl|\bspl[A-Z_]|AndBridge|spotilol|addAutoFeatures|addCSSJSHack|recAcc/i.test(src);
-                        } catch(e){}
-                        if(window.__splPsActive && owned){
+                    origSI = window.setInterval.bind(window);
+                    window.setInterval = function(fn, delay){
+                        if(window.__splPsActive){
                             var d = Number(delay) || 0;
                             if(d >= 100 && d < 5000){ delay = Math.max(d*3, 1500); }
                             else if(d >= 5000 && d < 10000){ delay = 10000; }
                         }
-                        return delegateSI.call(window, fn, delay);
+                        return origSI(fn, delay);
                     };
-                    window.setInterval = psIntervalWrapper;
 
                     window.__splPsRafMs = 500;
                 } else {
@@ -133,17 +117,9 @@ object PowerSave {
                     window.__splPsActive = false;
                     try{ if(videoObs) videoObs.disconnect(); }catch(e){}
                     videoObs = null;
-                    try{
-                        if(psDomReadyHandler) document.removeEventListener('DOMContentLoaded', psDomReadyHandler);
-                    }catch(e){}
-                    psDomReadyHandler = null;
                     try{ if(psStyle) psStyle.remove(); }catch(e){}
                     psStyle = null;
-                    try{
-                        if(savedSI && window.setInterval === psIntervalWrapper) window.setInterval = savedSI;
-                    }catch(e){}
-                    savedSI = null;
-                    psIntervalWrapper = null;
+                    if(origSI){ try{ window.setInterval = origSI; }catch(e){} }
                     unfreezeAll();
                     window.__splPsRafMs = 0;
                 }

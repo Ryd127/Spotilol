@@ -1,5 +1,6 @@
 package com.project.lol.innertube.models
 
+import com.project.lol.util.Logger
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -23,25 +24,36 @@ data class YouTubeClient(
     val isEmbedded: Boolean = false,
     val useWebPoTokens: Boolean = false,
 ) {
-    fun toContext(locale: YouTubeLocale, visitorData: String?, dataSyncId: String?) = Context(
-        client = Context.Client(
-            clientName = clientName,
-            clientVersion = clientVersion,
-            osName = osName,
-            osVersion = osVersion,
-            deviceMake = deviceMake,
-            deviceModel = deviceModel,
-            androidSdkVersion = androidSdkVersion,
-            gl = locale.gl,
-            hl = locale.hl,
-            visitorData = visitorData
-        ),
-        user = Context.User(
-            onBehalfOfUser = if (loginSupported) dataSyncId else null
-        ),
-    )
+    fun toContext(locale: YouTubeLocale, visitorData: String?, dataSyncId: String?): Context {
+        val safe = locale.sanitized()
+        if (safe != locale) {
+            Logger.d(
+                TAG,
+                "locale sanitized: gl='${locale.gl}' hl='${locale.hl}' -> gl='${safe.gl}' hl='${safe.hl}'"
+            )
+        }
+        return Context(
+            client = Context.Client(
+                clientName = clientName,
+                clientVersion = clientVersion,
+                osName = osName,
+                osVersion = osVersion,
+                deviceMake = deviceMake,
+                deviceModel = deviceModel,
+                androidSdkVersion = androidSdkVersion,
+                gl = safe.gl,
+                hl = safe.hl,
+                visitorData = visitorData
+            ),
+            user = Context.User(
+                onBehalfOfUser = if (loginSupported) dataSyncId else null
+            ),
+        )
+    }
 
     companion object {
+        private const val TAG = "innertube"
+
         const val USER_AGENT_WEB = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:140.0) Gecko/20100101 Firefox/140.0"
 
         const val ORIGIN_YOUTUBE_MUSIC = "https://music.youtube.com"
@@ -241,6 +253,26 @@ data class YouTubeClient(
             loginSupported = false,
             useSignatureTimestamp = false,
             packageName = "com.google.ios.youtube"
+        )
+
+        /**
+         * Only used to browse the Lyrics tab. The WEB_REMIX client returns the lyrics as plain
+         * text, while this one returns `timedLyricsModel` with per-line millisecond cues.
+         *
+         * Unofficial, so callers must keep a WEB_REMIX fallback for when it stops answering.
+         * No login: lyrics are public data and the account must not be attached to the request.
+         */
+        val ANDROID_MUSIC = YouTubeClient(
+            clientName = "ANDROID_MUSIC",
+            clientVersion = "7.27.52",
+            clientId = "21",
+            userAgent = "com.google.android.apps.youtube.music/7.27.52 (Linux; U; Android 14) gzip",
+            osName = "Android",
+            osVersion = "14",
+            androidSdkVersion = "34",
+            friendlyName = "Android Music",
+            loginSupported = false,
+            useSignatureTimestamp = false
         )
     }
 }

@@ -19,20 +19,15 @@ object AndroidAuto {
                 return !!window.spotAuthToken;
             };
 
-            var isFetchingLib = false;
+            window.pendingMediaRequests = window.pendingMediaRequests || new Set();
             var pendingLibPromise = null;
 
-            window.checkMediaLib = async function(force) {
-                if (isFetchingLib && !force) {
-                    if (pendingLibPromise) return pendingLibPromise;
-                    return;
-                }
+            window.checkMediaLib = function(force) {
                 if (pendingLibPromise && !force) return pendingLibPromise;
-                await window.ensureAuthToken();
-                if (!window.spotAuthToken) return;
-                isFetchingLib = true;
-                pendingLibPromise = (async function() {
+                var run = (async function() {
                     try {
+                        await window.ensureAuthToken();
+                        if (!window.spotAuthToken) return;
                         var allItems = await window.fetchAllLibrary();
                         var lib = window.parseLibrary(allItems);
                         ['playlists','albums','artists','podcasts'].forEach(function(k) {
@@ -47,14 +42,22 @@ object AndroidAuto {
                             }
                         }
                         window.mediaLib = lib;
+                        if (window.pendingMediaRequests && window.pendingMediaRequests.size > 0) {
+                            var it = window.pendingMediaRequests.values();
+                            for (var reqId of it) {
+                                var items = (window.mediaLib || {})[reqId] || [];
+                                AndBridge.onMediaItemsLoaded(reqId, JSON.stringify(items));
+                            }
+                            window.pendingMediaRequests.clear();
+                        }
                     } catch (e) {
                         console.error('checkMediaLib error:', e);
                     } finally {
-                        isFetchingLib = false;
-                        pendingLibPromise = null;
+                        if (pendingLibPromise === run) pendingLibPromise = null;
                     }
                 })();
-                return pendingLibPromise;
+                pendingLibPromise = run;
+                return run;
             };
 
             window.likedSongsCache = window.likedSongsCache || null;
@@ -127,12 +130,12 @@ object AndroidAuto {
                 })();
             } catch(e){}
 
-            async function fetchMediaItems(parentId, requestToken) {
-                requestToken = requestToken || '';
+            async function fetchMediaItems(parentId) {
                 try {
                     await window.ensureAuthToken();
                     if (parentId === 'playlists' || parentId === 'albums' || parentId === 'artists' || parentId === 'podcasts') {
                         if (!window.mediaLib || !window.mediaLib[parentId] || !window.mediaLib[parentId].length) {
+                            window.pendingMediaRequests.add(parentId);
                             await window.checkMediaLib();
                         }
                         var items = ((window.mediaLib && window.mediaLib[parentId]) || []).map(function(item) {
@@ -142,13 +145,14 @@ object AndroidAuto {
                             }
                             return { id: item.id, name: item.name, image: img, artists: item.artists || [], browsable: true, isGrid: true };
                         });
-                        AndBridge.onMediaItemsLoaded(parentId, requestToken, JSON.stringify(items));
+                        window.pendingMediaRequests.delete(parentId);
+                        AndBridge.onMediaItemsLoaded(parentId, JSON.stringify(items));
                         return;
                     }
 
                     if (parentId === 'spotify:collection:tracks' || parentId.indexOf(':collection') !== -1 || parentId.indexOf('spotify:collection') === 0) {
                         var tracks = await getLikedSongsTracks();
-                        AndBridge.onMediaItemsLoaded(parentId, requestToken, JSON.stringify(tracks));
+                        AndBridge.onMediaItemsLoaded(parentId, JSON.stringify(tracks));
                         return;
                     }
 
@@ -184,7 +188,7 @@ object AndroidAuto {
                             var coverUrl = (albumData.coverArt && albumData.coverArt.sources && albumData.coverArt.sources[0] && albumData.coverArt.sources[0].url) || (albumData.images && albumData.images[0] && albumData.images[0].url) || null;
                             return { id: uri, name: trackData.name || trackData.title || 'Unknown Track', image: coverUrl, artists: artists, browsable: false };
                         }).filter(Boolean);
-                        AndBridge.onMediaItemsLoaded(parentId, requestToken, JSON.stringify(tracks));
+                        AndBridge.onMediaItemsLoaded(parentId, JSON.stringify(tracks));
                         return;
                     }
 
@@ -218,7 +222,7 @@ object AndroidAuto {
                             var artists = (trackObj.artists && trackObj.artists.items) ? trackObj.artists.items.map(function(a) { return a.profile && a.profile.name; }).filter(Boolean) : [];
                             return { id: uri, name: trackObj.name || trackObj.title || 'Unknown Track', image: albumCover, artists: artists, browsable: false };
                         }).filter(Boolean);
-                        AndBridge.onMediaItemsLoaded(parentId, requestToken, JSON.stringify(tracks));
+                        AndBridge.onMediaItemsLoaded(parentId, JSON.stringify(tracks));
                         return;
                     }
 
@@ -253,7 +257,7 @@ object AndroidAuto {
                             var coverUrl = (albumData.coverArt && albumData.coverArt.sources && albumData.coverArt.sources[0] && albumData.coverArt.sources[0].url) || (albumData.images && albumData.images[0] && albumData.images[0].url) || null;
                             return { id: uri, name: trackObj.name || trackObj.title || 'Unknown Track', image: coverUrl, artists: artists, browsable: false };
                         }).filter(Boolean);
-                        AndBridge.onMediaItemsLoaded(parentId, requestToken, JSON.stringify(tracks));
+                        AndBridge.onMediaItemsLoaded(parentId, JSON.stringify(tracks));
                         return;
                     }
 
@@ -272,20 +276,19 @@ object AndroidAuto {
                             var uri = e.uri || e._uri || (e.id ? 'spotify:episode:' + e.id : '') || '';
                             return { id: uri, name: e.name, image: (e.images && e.images[0] && e.images[0].url) || null, browsable: false };
                         });
-                        AndBridge.onMediaItemsLoaded(parentId, requestToken, JSON.stringify(episodes));
+                        AndBridge.onMediaItemsLoaded(parentId, JSON.stringify(episodes));
                         return;
                     }
 
-                    AndBridge.onMediaItemsLoaded(parentId, requestToken, '[]');
+                    AndBridge.onMediaItemsLoaded(parentId, '[]');
                 } catch (e) {
                     console.error('Error loading media items for ' + parentId, e);
-                    AndBridge.onMediaItemsLoaded(parentId, requestToken, '[]');
+                    AndBridge.onMediaItemsLoaded(parentId, '[]');
                 }
             }
             window.fetchMediaItems = fetchMediaItems;
 
-            async function searchMediaItems(query, requestToken) {
-                requestToken = requestToken || '';
+            async function searchMediaItems(query) {
                 try {
                     var resp = await (window.mngFetch || oriFetch)('https://api-partner.spotify.com/pathfinder/v2/query', {
                         method: 'POST',
@@ -404,28 +407,15 @@ object AndroidAuto {
                     rawPlaylists.slice(3).forEach(pushItem);
                     rawArtists.slice(2).forEach(pushItem);
 
-                    AndBridge.onSearchCompleted(query, requestToken, JSON.stringify(results));
+                    AndBridge.onSearchCompleted(query, JSON.stringify(results));
                     return results;
                 } catch (e) {
                     console.error('Search error for ' + query, e);
-                    AndBridge.onSearchCompleted(query, requestToken, '[]');
+                    AndBridge.onSearchCompleted(query, '[]');
                     return [];
                 }
             }
             window.searchMediaItems = searchMediaItems;
-
-            window.playSearchResult = async function(query) {
-                var results = await searchMediaItems(query, '');
-                var playable = (results || []).find(function(item) {
-                    return item && !item.browsable && item.id &&
-                        (item.id.indexOf('spotify:track:') === 0 || item.id.indexOf('spotify:episode:') === 0);
-                });
-                if (playable && typeof window.playFromUri === 'function') {
-                    window.playFromUri(playable.id);
-                    return true;
-                }
-                return false;
-            };
         
     """
 }

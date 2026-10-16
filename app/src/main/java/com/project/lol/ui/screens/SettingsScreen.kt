@@ -7,9 +7,6 @@ import android.content.SharedPreferences
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import android.webkit.CookieManager
-import android.webkit.WebStorage
-import android.webkit.WebView
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -18,23 +15,24 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -42,7 +40,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -50,6 +49,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.PlainTooltip
@@ -57,7 +57,6 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.SecondaryScrollableTabRow
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -67,6 +66,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TooltipAnchorPosition
 import androidx.compose.material3.TooltipBox
 import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberSliderState
 import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -81,14 +81,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboard
-import androidx.compose.ui.platform.toClipEntry
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.toClipEntry
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
@@ -101,30 +100,52 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.webkit.WebViewCompat
 import com.project.lol.R
+import com.project.lol.innertube.YouTube
 import com.project.lol.offline.DownloadFolder
 import com.project.lol.offline.DownloadFormat
 import com.project.lol.offline.DownloadPrefs
+import com.project.lol.offline.lyrics.LyricsSource
 import com.project.lol.profile.ProfileManager
-import com.project.lol.proxy.LocalProxyManager
 import com.project.lol.service.MediaNotificationService
+import com.project.lol.service.OfflineMediaService
+import com.project.lol.ui.SplashActivity
 import com.project.lol.ui.components.ChangelogDialog
+import com.project.lol.ui.lyrics.CustomLyricsPresets
+import com.project.lol.ui.lyrics.LyricsPreset
+import com.project.lol.ui.lyrics.LyricsPresetShare
 import com.project.lol.ui.theme.SpotifyTheme
+import com.project.lol.ui.theme.ThemeController
+import com.project.lol.ui.theme.ThemeHarmony
+import com.project.lol.ui.theme.ThemePalette
+import com.project.lol.ui.theme.ThemePreset
+import com.project.lol.ui.theme.ThemePresets
+import com.project.lol.ui.theme.ThemeShare
+import com.project.lol.ui.theme.harmonized
+import com.project.lol.util.AppLocale
+import com.project.lol.util.BatterySaver
 import com.project.lol.util.BuildInfo
-import com.project.lol.util.GitHubApi
-import com.project.lol.util.GitHubRelease
+import com.project.lol.util.DeviceInfo
+import com.project.lol.util.InnertubeCachePrefs
 import com.project.lol.util.LogEntry
+import com.project.lol.util.LogExport
 import com.project.lol.util.LogFilter
 import com.project.lol.util.LogLevel
 import com.project.lol.util.Logger
-import com.project.lol.util.MarkdownText
+import com.project.lol.util.Logger.isAutoScroll
+import com.project.lol.util.Telemetry
+import com.project.lol.webview.helpers.LyricsStyle
 import com.project.lol.webview.helpers.LyricsTheme
+import com.project.lol.widget.WidgetStudioActivity
 import compose.icons.TablerIcons
-import compose.icons.tablericons.AlertTriangle
+import compose.icons.tablericons.ArrowDown
 import compose.icons.tablericons.ArrowsMinimize
 import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.ArrowsUpDown
+import compose.icons.tablericons.Battery
 import compose.icons.tablericons.BrandDiscord
 import compose.icons.tablericons.BrightnessUp
 import compose.icons.tablericons.Brush
@@ -136,59 +157,51 @@ import compose.icons.tablericons.Click
 import compose.icons.tablericons.CloudOff
 import compose.icons.tablericons.Code
 import compose.icons.tablericons.ColorSwatch
+import compose.icons.tablericons.Copy
+import compose.icons.tablericons.Database
 import compose.icons.tablericons.DeviceMobile
+import compose.icons.tablericons.Devices
 import compose.icons.tablericons.Download
 import compose.icons.tablericons.EyeOff
+import compose.icons.tablericons.FileDownload
+import compose.icons.tablericons.FileUpload
 import compose.icons.tablericons.Flask
 import compose.icons.tablericons.Folder
 import compose.icons.tablericons.InfoCircle
 import compose.icons.tablericons.Language
 import compose.icons.tablericons.Link
+import compose.icons.tablericons.Microphone
 import compose.icons.tablericons.Moon
+import compose.icons.tablericons.Movie
+import compose.icons.tablericons.Music
 import compose.icons.tablericons.Palette
 import compose.icons.tablericons.PlayerPlay
 import compose.icons.tablericons.Playlist
+import compose.icons.tablericons.Plus
 import compose.icons.tablericons.Power
+import compose.icons.tablericons.Rocket
 import compose.icons.tablericons.RotateClockwise2
+import compose.icons.tablericons.Search
 import compose.icons.tablericons.Shield
+import compose.icons.tablericons.Terminal2
 import compose.icons.tablericons.Trash
 import compose.icons.tablericons.TrashOff
 import compose.icons.tablericons.User
 import compose.icons.tablericons.UserPlus
+import compose.icons.tablericons.Video
 import compose.icons.tablericons.WaveSine
 import compose.icons.tablericons.X
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import kotlin.math.abs
 
-private val PalettePresets = listOf(
-    R.string.settings_palette_default to null,
-    R.string.settings_palette_spotify_green to "#1DB954",
-    R.string.settings_palette_purple to "#BB86FC",
-    R.string.settings_palette_blue to "#2196F3",
-    R.string.settings_palette_red to "#E53935",
-    R.string.settings_palette_orange to "#FB8C00",
-    R.string.settings_palette_pink to "#EC407A",
-    R.string.settings_palette_teal to "#26A69A",
-    R.string.settings_palette_yellow to "#FDD835",
-    R.string.settings_palette_cyan to "#00BCD4"
-)
-
-private fun parsePaletteColor(hex: String?): Color? {
-    if (hex.isNullOrBlank()) return null
-    return runCatching { Color(android.graphics.Color.parseColor(hex)) }.getOrNull()
-}
-
-private fun formatHex(color: Color): String {
-    val r = (color.red * 255f).roundToInt()
-    val g = (color.green * 255f).roundToInt()
-    val b = (color.blue * 255f).roundToInt()
-    return "#" + String.format(Locale.US, "%02X%02X%02X", r, g, b)
-}
 private const val DEBUG_UNLOCK_TAPS = 5
+private const val LOGGER_WIDE_BREAKPOINT = 600
+private const val LYRICS_WIDE_BREAKPOINT = 600
 
 private enum class SettingsTab(@StringRes val labelRes: Int) {
     Appearance(R.string.settings_tab_appearance),
@@ -215,24 +228,29 @@ fun SettingsContent(
     onLandscapeModeChange: (Boolean) -> Unit,
     keepScreenOn: Boolean,
     onKeepScreenOnChange: (Boolean) -> Unit,
-    paletteSeed: String?,
-    onPaletteSeedChange: (String?) -> Unit,
-    onConnectionModeChange: (String) -> Unit,
+    themePreset: String,
+    onThemePresetChange: (String) -> Unit,
+    themeSecondary: Color?,
+    onThemeSecondaryChange: (Color?) -> Unit,
     onOfflineModeChange: (Boolean) -> Unit,
     onSaveProfile: (String, String) -> Unit,
     onLoadProfile: (String) -> Unit,
     onDeleteProfile: (String) -> Unit,
     onClearCache: () -> Unit,
     onClearData: () -> Unit,
+    onClearThirdParty: () -> Unit,
     onDebugToggle: (Boolean) -> Unit = {},
     blockServiceWorker: Boolean,
-    onBlockServiceWorkerChange: (Boolean) -> Unit
+    onBlockServiceWorkerChange: (Boolean) -> Unit,
+    onNativeMiniPlayerChange: (Boolean) -> Unit = {},
+    onNativeMobileUIChange: (Boolean) -> Unit = {}
 ) {
     var autoplayMode by remember { mutableStateOf(prefs.getString("APlayMode", "disabled") ?: "disabled") }
     var takeControl by remember { mutableStateOf(prefs.getBoolean("TakeControl", true)) }
     var andAuto by remember { mutableStateOf(prefs.getBoolean("AndAuto", true)) }
-    var closeNowPlay by remember { mutableStateOf(prefs.getBoolean("CloseNowPlay", true)) }
-    var guiMode by remember { mutableStateOf(prefs.getString("GuiMode", "csshack") ?: "csshack") }
+    var closeNowPlay by remember { mutableStateOf(prefs.getBoolean("CloseNowPlay", false)) }
+    // dead code: gui mode is fixed to mobile css and js, see the appearance section
+    // var guiMode by remember { mutableStateOf(prefs.getString("GuiMode", "csshack") ?: "csshack") }
     var customCss by remember { mutableStateOf(prefs.getString("CustomCss", "") ?: "") }
     var amoledTheme by remember { mutableStateOf(amoledThemeState) }
     var swipeStop by remember { mutableStateOf(prefs.getBoolean("SwipeStop", true)) }
@@ -240,30 +258,44 @@ fun SettingsContent(
     var btAutoResume by remember { mutableStateOf(prefs.getBoolean("BtAutoResume", false)) }
     var hpAutoResume by remember { mutableStateOf(prefs.getBoolean("HpAutoResume", false)) }
     var playerMode by remember { mutableStateOf(prefs.getString("PlayerMode", "spotilol") ?: "spotilol") }
+    var nativeMini by remember { mutableStateOf(prefs.getBoolean("NativeMiniPlayer", false)) }
+    var nativeMobile by remember { mutableStateOf(prefs.getBoolean("NativeMobileUI", true)) }
     var connectionMode by remember { mutableStateOf(prefs.getString("ConnectionMode", "normal") ?: "normal") }
     var offlineMode by remember { mutableStateOf(prefs.getBoolean("OfflineMode", false)) }
     var blockSW by remember { mutableStateOf(blockServiceWorker) }
     var hideEmptyPlayer by remember { mutableStateOf(prefs.getBoolean("HideEmptyPlayer", false)) }
+    var webCanvas by remember { mutableStateOf(prefs.getBoolean("WebCanvas", true)) }
+    var webVideos by remember { mutableStateOf(prefs.getBoolean("WebVideos", true)) }
     var playlistSortEnabled by remember { mutableStateOf(prefs.getBoolean("PlaylistSortEnabled", true)) }
     var showScrollbar by remember { mutableStateOf(prefs.getBoolean("ShowScrollbar", true)) }
     var lyricsStyle by remember { mutableStateOf(prefs.getString("LyricsStyle", LyricsTheme.DEFAULT_STYLE) ?: LyricsTheme.DEFAULT_STYLE) }
+    var lyricsPresetId by remember { mutableStateOf(prefs.getString("LyricsPresetId", LyricsTheme.DEFAULT_STYLE) ?: LyricsTheme.DEFAULT_STYLE) }
+    var lyricsScale by remember { mutableFloatStateOf(prefs.getFloat("LyricsScale", 1f)) }
+    var lyricsSpacing by remember { mutableFloatStateOf(prefs.getFloat("LyricsSpacing", 1f)) }
+    var lyricsAlign by remember { mutableStateOf(prefs.getString("LyricsAlign", LyricsTheme.ALIGN_START) ?: LyricsTheme.ALIGN_START) }
+    var lyricsAnimate by remember { mutableStateOf(prefs.getBoolean("LyricsAnimate", true)) }
+    var spicyLyricsEnabled by remember { mutableStateOf(prefs.getBoolean("SpicyLyrics", true)) }
+    var telemetryEnabled by remember { mutableStateOf(prefs.getBoolean(Telemetry.KEY, false)) }
+    var fastStartup by remember { mutableStateOf(prefs.getBoolean("FastStartup", false)) }
 
     val context = LocalContext.current
     val resources = LocalResources.current
-    val configuration = LocalConfiguration.current
+    var appLanguage by remember { mutableStateOf(AppLocale.current(context)) }
+    var showLanguageDialog by remember { mutableStateOf(false) }
     var profiles by remember { mutableStateOf(ProfileManager.getProfiles(context)) }
 
-    var showConnectionModeDialog by remember { mutableStateOf(false) }
     var showSaveAccountDialog by remember { mutableStateOf(false) }
     var pendingCookies by remember { mutableStateOf<String?>(null) }
     var accountNameInput by remember { mutableStateOf("") }
     var showClearCacheDialog by remember { mutableStateOf(false) }
     var showClearDataDialog by remember { mutableStateOf(false) }
+    var showClearThirdPartyDialog by remember { mutableStateOf(false) }
     var showAutoPlayDialog by remember { mutableStateOf(false) }
     var showPlayerModeDialog by remember { mutableStateOf(false) }
-    var showGuiModeDialog by remember { mutableStateOf(false) }
+    // dead code: the gui mode selector was removed, keep the flag for the wide window refactor
+    // var showGuiModeDialog by remember { mutableStateOf(false) }
     var showCustomCssDialog by remember { mutableStateOf(false) }
-    var showPaletteDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by remember { mutableStateOf(false) }
     var showChangelogDialog by remember { mutableStateOf(false) }
     var loggingOn by remember { mutableStateOf(Logger.isEnabled()) }
     var showDevlogDialog by remember { mutableStateOf(false) }
@@ -285,6 +317,25 @@ fun SettingsContent(
         dlFolderPath = DownloadPrefs.folderDisplayPath(context)
         dlFolderLabel = DownloadPrefs.folderLabel(context)
     }
+    fun applyInnertubeCacheLimit() {
+        val bytes = InnertubeCachePrefs.maxBytes(context)
+        val applied = runCatching { YouTube.setCacheLimit(bytes) }.isSuccess
+        Toast.makeText(context,
+            resources.getString(
+                if (applied) R.string.settings_innertube_cache_applied
+                else R.string.settings_innertube_cache_restart_hint
+            ),
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+    fun applyLanguageRestart() {
+        runCatching { context.stopService(Intent(context, MediaNotificationService::class.java)) }
+        runCatching { context.stopService(Intent(context, OfflineMediaService::class.java)) }
+        val intent = Intent(context, SplashActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        runCatching { context.startActivity(intent) }
+    }
     val folderPicker = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -297,6 +348,21 @@ fun SettingsContent(
         }
     }
     var dlTags by remember { mutableStateOf(DownloadPrefs.writeTags(context)) }
+    var dlLyrics by remember { mutableStateOf(DownloadPrefs.lyrics(context)) }
+    var dlLyricsSource by remember { mutableStateOf(DownloadPrefs.lyricsSource(context)) }
+    var dlLyricsEmbed by remember { mutableStateOf(DownloadPrefs.lyricsEmbed(context)) }
+    var dlLyricsSidecar by remember { mutableStateOf(DownloadPrefs.lyricsSidecar(context)) }
+    var showLyricsSourceDialog by remember { mutableStateOf(false) }
+
+    var innertubeCacheMb by remember { mutableStateOf(InnertubeCachePrefs.mb(context)) }
+    var innertubeCacheUsed by remember { mutableStateOf(0L) }
+    var showInnertubeCacheDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(innertubeCacheMb) {
+        innertubeCacheUsed = withContext(Dispatchers.IO) {
+            InnertubeCachePrefs.usedBytes(context)
+        }
+    }
 
     fun onDebugSecretTap() {
         if (debugUnlocked) return
@@ -336,6 +402,7 @@ fun SettingsContent(
     var settingsTab by remember { mutableStateOf(SettingsTab.Appearance) }
     val tabScrollStates = SettingsTab.entries.map { rememberScrollState() }
     val scrollState = tabScrollStates[settingsTab.ordinal]
+    var batteryExempt by remember(settingsTab) { mutableStateOf(BatterySaver.isExempt(context)) }
 
     val pkg = remember { WebViewCompat.getCurrentWebViewPackage(context) }
     val packageInfo = remember {
@@ -383,17 +450,29 @@ fun SettingsContent(
                     title = stringResource(R.string.settings_section_appearance),
                     icon = TablerIcons.Palette
                 ) {
-                    val guiLabel = when (guiMode) {
-                        "csshack" -> stringResource(R.string.settings_gui_mode_css_js)
-                        "bigwindow" -> stringResource(R.string.settings_gui_mode_wide)
-                        "none" -> stringResource(R.string.settings_gui_mode_none)
-                        else -> stringResource(R.string.settings_gui_mode_css_js)
-                    }
+                    val systemLanguageLabel = stringResource(R.string.settings_language_system)
+                    SettingTile(
+                        title = stringResource(R.string.settings_language),
+                        subtitle = AppLocale.nativeName(appLanguage) ?: systemLanguageLabel,
+                        icon = TablerIcons.Language,
+                        onClick = { showLanguageDialog = true }
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                    // dead code: gui mode selector. only mobile css and js is implemented,
+                    // wide window and none need a refactor across the webview injections,
+                    // so the value is fixed and the label is no longer read from prefs.
+                    // val guiLabel = when (guiMode) {
+                    //     "csshack" -> stringResource(R.string.settings_gui_mode_css_js)
+                    //     "bigwindow" -> stringResource(R.string.settings_gui_mode_wide)
+                    //     "none" -> stringResource(R.string.settings_gui_mode_none)
+                    //     else -> stringResource(R.string.settings_gui_mode_css_js)
+                    // }
                     SettingTile(
                         title = stringResource(R.string.settings_gui_hack_mode),
-                        subtitle = guiLabel,
+                        subtitle = stringResource(R.string.settings_gui_mode_css_js),
                         icon = TablerIcons.Palette,
-                        onClick = { showGuiModeDialog = true }
+                        info = stringResource(R.string.settings_gui_hack_mode_info)
                     )
 
                     HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
@@ -420,16 +499,23 @@ fun SettingsContent(
 
                     HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
 
-                    val accentLabel = when {
-                        materialYou -> stringResource(R.string.settings_accent_dynamic)
-                        paletteSeed.isNullOrBlank() -> stringResource(R.string.settings_accent_default)
-                        else -> stringResource(R.string.settings_accent_custom, paletteSeed)
-                    }
+                    val themeLabel = ThemePresets.byId[themePreset]?.let { "${it.family} · ${it.name}" }
+                        ?: themePreset
                     SettingTile(
-                        title = stringResource(R.string.settings_accent_color),
-                        subtitle = accentLabel,
+                        title = stringResource(R.string.settings_theme),
+                        subtitle = if (materialYou) stringResource(R.string.settings_theme_dynamic) else themeLabel,
                         icon = TablerIcons.ColorSwatch,
-                        onClick = { showPaletteDialog = true }
+                        onClick = { showThemeDialog = true }
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+                    SettingTile(
+                        title = stringResource(R.string.settings_theme_secondary),
+                        subtitle = themeSecondary?.let { ThemeHarmony.toHex(it) }
+                            ?: stringResource(R.string.settings_theme_secondary_auto),
+                        icon = TablerIcons.Brush,
+                        onClick = { showThemeDialog = true }
                     )
 
                     HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
@@ -456,6 +542,23 @@ fun SettingsContent(
                         onCheckedChange = { enabled ->
                             onHideTopBarChange(enabled)
                             prefs.edit().putBoolean("HideTopBar", enabled).apply()
+                        }
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+                    val widgetStudioContext = LocalContext.current
+                    SettingTile(
+                        title = stringResource(R.string.settings_widget_studio),
+                        subtitle = stringResource(R.string.settings_widget_studio_subtitle),
+                        icon = TablerIcons.Devices,
+                        onClick = {
+                            runCatching {
+                                widgetStudioContext.startActivity(
+                                    Intent(widgetStudioContext, WidgetStudioActivity::class.java)
+                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                )
+                            }
                         }
                     )
 
@@ -527,6 +630,7 @@ fun SettingsContent(
                     val playerModeLabel = when (playerMode) {
                         "spotilol" -> stringResource(R.string.settings_player_spotilol)
                         "original" -> stringResource(R.string.settings_player_original)
+                        "fullscreen" -> stringResource(R.string.settings_player_fullscreen)
                         else -> stringResource(R.string.settings_player_spotilol)
                     }
                     SettingTile(
@@ -534,6 +638,56 @@ fun SettingsContent(
                         subtitle = playerModeLabel,
                         icon = TablerIcons.PlayerPlay,
                         onClick = { showPlayerModeDialog = true }
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+                    SettingSwitchTile(
+                        title = "Native Android mobile UI",
+                        subtitle = "Home, Search, Library and Now Playing in Compose. Use Web to restore old view.",
+                        icon = TablerIcons.PlayerPlay,
+                        checked = nativeMobile,
+                        onCheckedChange = { enabled ->
+                            nativeMobile = enabled
+                            onNativeMobileUIChange(enabled)
+                        }
+                    )
+                    HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+                    SettingSwitchTile(
+                        title = "Native Android mini-player (preview)",
+                        subtitle = "Compose player; Web engine stays unchanged. Turn off to restore old UI.",
+                        icon = TablerIcons.PlayerPlay,
+                        checked = nativeMini,
+                        onCheckedChange = { enabled ->
+                            nativeMini = enabled
+                            onNativeMiniPlayerChange(enabled)
+                        }
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+                    SettingSwitchTile(
+                        title = stringResource(R.string.settings_web_canvas),
+                        subtitle = stringResource(R.string.settings_web_canvas_subtitle),
+                        icon = TablerIcons.Movie,
+                        checked = webCanvas,
+                        onCheckedChange = {
+                            webCanvas = it
+                            prefs.edit().putBoolean("WebCanvas", it).apply()
+                        }
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+                    SettingSwitchTile(
+                        title = stringResource(R.string.settings_web_videos),
+                        subtitle = stringResource(R.string.settings_web_videos_subtitle),
+                        icon = TablerIcons.Video,
+                        checked = webVideos,
+                        onCheckedChange = {
+                            webVideos = it
+                            prefs.edit().putBoolean("WebVideos", it).apply()
+                        }
                     )
 
                     HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
@@ -568,11 +722,31 @@ fun SettingsContent(
                         LyricsTheme.STYLE_OPTIONS.firstOrNull { it.first == lyricsStyle }?.second
                             ?: R.string.settings_lyrics_style_fullscreen
                     )
+                    val lyricsAlignLabel = stringResource(
+                        when (lyricsAlign) {
+                            LyricsTheme.ALIGN_CENTER -> R.string.settings_lyrics_align_center
+                            LyricsTheme.ALIGN_END -> R.string.settings_lyrics_align_end
+                            else -> R.string.settings_lyrics_align_start
+                        }
+                    )
                     SettingTile(
                         title = stringResource(R.string.settings_lyrics_style),
-                        subtitle = lyricsStyleLabel,
+                        subtitle = "$lyricsStyleLabel · $lyricsAlignLabel · ${"%.2f".format(lyricsScale)}×",
                         icon = TablerIcons.Playlist,
                         onClick = { showLyricsStyleDialog = true }
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+                    SettingSwitchTile(
+                        title = stringResource(R.string.settings_spicylyrics),
+                        subtitle = stringResource(R.string.settings_spicylyrics_subtitle),
+                        icon = TablerIcons.WaveSine,
+                        checked = spicyLyricsEnabled,
+                        onCheckedChange = {
+                            spicyLyricsEnabled = it
+                            prefs.edit().putBoolean("SpicyLyrics", it).apply()
+                        }
                     )
 
                     HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
@@ -725,6 +899,78 @@ fun SettingsContent(
                             DownloadPrefs.setWriteTags(context, enabled)
                         }
                     )
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+                    SettingSwitchTile(
+                        title = stringResource(R.string.settings_dl_lyrics),
+                        subtitle = stringResource(R.string.settings_dl_lyrics_subtitle),
+                        icon = TablerIcons.Microphone,
+                        checked = dlLyrics,
+                        onCheckedChange = { enabled ->
+                            dlLyrics = enabled
+                            DownloadPrefs.setLyrics(context, enabled)
+                        }
+                    )
+
+                    if (dlLyrics) {
+                        HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+                        SettingTile(
+                            title = stringResource(R.string.settings_dl_lyrics_source),
+                            subtitle = stringResource(
+                                when (dlLyricsSource) {
+                                    LyricsSource.YOUTUBE -> R.string.settings_dl_lyrics_source_youtube
+                                    LyricsSource.SPOTIFY -> R.string.settings_dl_lyrics_source_spotify
+                                    LyricsSource.AUTO -> R.string.settings_dl_lyrics_source_auto
+                                }
+                            ),
+                            icon = TablerIcons.Music,
+                            onClick = { showLyricsSourceDialog = true }
+                        )
+
+                        HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+                        SettingSwitchTile(
+                            title = stringResource(R.string.settings_dl_lyrics_embed),
+                            subtitle = stringResource(R.string.settings_dl_lyrics_embed_subtitle),
+                            icon = TablerIcons.Playlist,
+                            checked = dlLyricsEmbed,
+                            onCheckedChange = { enabled ->
+                                dlLyricsEmbed = enabled
+                                DownloadPrefs.setLyricsEmbed(context, enabled)
+                            }
+                        )
+
+                        HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+                        SettingSwitchTile(
+                            title = stringResource(R.string.settings_dl_lyrics_sidecar),
+                            subtitle = stringResource(R.string.settings_dl_lyrics_sidecar_subtitle),
+                            icon = TablerIcons.Folder,
+                            checked = dlLyricsSidecar,
+                            onCheckedChange = { enabled ->
+                                dlLyricsSidecar = enabled
+                                DownloadPrefs.setLyricsSidecar(context, enabled)
+                            }
+                        )
+                    }
+
+                    val innertubeCacheLimitLabel = if (innertubeCacheMb == InnertubeCachePrefs.UNLIMITED) {
+                        stringResource(R.string.settings_innertube_cache_unlimited)
+                    } else {
+                        stringResource(R.string.settings_innertube_cache_mb, innertubeCacheMb)
+                    }
+                    SettingTile(
+                        title = stringResource(R.string.settings_innertube_cache),
+                        subtitle = stringResource(
+                            R.string.settings_innertube_cache_subtitle,
+                            innertubeCacheLimitLabel,
+                            InnertubeCachePrefs.formatBytes(innertubeCacheUsed)
+                        ),
+                        icon = TablerIcons.Database,
+                        onClick = { showInnertubeCacheDialog = true }
+                    )
                 }
 
                 SettingSectionCard(
@@ -751,7 +997,7 @@ fun SettingsContent(
                         profiles.forEachIndexed { index, profile ->
                             ProfileRow(
                                 name = profile.name,
-                                subtitle = stringResource(R.string.settings_profile_saved, SimpleDateFormat("MMM d, yyyy", configuration.locales[0]).format(Date(profile.savedAt))),
+                                subtitle = stringResource(R.string.settings_profile_saved, SimpleDateFormat("MMM d, yyyy", resources.configuration.locales[0]).format(Date(profile.savedAt))),
                                 onLoad = { onLoadProfile(profile.cookies) },
                                 onDelete = {
                                     onDeleteProfile(profile.name)
@@ -767,23 +1013,6 @@ fun SettingsContent(
             }
 
             if (settingsTab == SettingsTab.Advanced) {
-                SettingSectionCard(
-                    title = stringResource(R.string.settings_section_connection_mode),
-                    icon = TablerIcons.Shield
-                ) {
-                    val modeLabel = if (connectionMode == "proxy") {
-                        stringResource(R.string.settings_connection_proxy)
-                    } else {
-                        stringResource(R.string.settings_connection_normal)
-                    }
-                    SettingTile(
-                        title = stringResource(R.string.settings_connection_mode),
-                        subtitle = stringResource(R.string.settings_connection_mode_subtitle, modeLabel),
-                        icon = TablerIcons.Shield,
-                        onClick = { showConnectionModeDialog = true }
-                    )
-                }
-
                 SettingSectionCard(
                     title = stringResource(R.string.settings_section_system),
                     icon = TablerIcons.Power
@@ -801,11 +1030,33 @@ fun SettingsContent(
 
                     HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
 
+                    SettingSwitchTile(
+                        title = stringResource(R.string.settings_fast_startup),
+                        subtitle = stringResource(R.string.settings_fast_startup_subtitle),
+                        icon = TablerIcons.Rocket,
+                        checked = fastStartup,
+                        onCheckedChange = {
+                            fastStartup = it
+                            prefs.edit().putBoolean("FastStartup", it).apply()
+                        }
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
                     SettingTile(
                         title = stringResource(R.string.settings_empty_cache),
                         subtitle = stringResource(R.string.settings_empty_cache_subtitle),
                         icon = TablerIcons.Brush,
                         onClick = { showClearCacheDialog = true }
+                    )
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+                    SettingTile(
+                        title = stringResource(R.string.settings_clear_third_party),
+                        subtitle = stringResource(R.string.settings_clear_third_party_subtitle),
+                        icon = TablerIcons.User,
+                        onClick = { showClearThirdPartyDialog = true }
                     )
 
                     HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
@@ -841,23 +1092,52 @@ fun SettingsContent(
                             }
                         }
                     )
+
+                    HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
+
+                    SettingTile(
+                        title = stringResource(R.string.settings_battery_background),
+                        subtitle = if (batteryExempt) {
+                            stringResource(R.string.settings_battery_background_on)
+                        } else {
+                            stringResource(R.string.settings_battery_background_off)
+                        },
+                        icon = TablerIcons.Battery,
+                        info = stringResource(R.string.settings_battery_info),
+                        onClick = {
+                            if (BatterySaver.isExempt(context)) {
+                                batteryExempt = true
+                                Toast.makeText(
+                                    context,
+                                    resources.getString(R.string.settings_battery_already_allowed),
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } else if (!BatterySaver.requestExemption(context)) {
+                                Toast.makeText(
+                                    context,
+                                    resources.getString(R.string.settings_battery_prompt_unavailable),
+                                    Toast.LENGTH_LONG
+                                ).show()
+                                BatterySaver.openAppSettings(context)
+                            }
+                        }
+                    )
                 }
 
-                if (connectionMode == "proxy") {
-                    SettingSectionCard(
-                        title = stringResource(R.string.settings_section_security_network),
-                        icon = TablerIcons.Shield
-                    ) {
-                        SettingTile(
-                            title = stringResource(R.string.settings_ca_certificate),
-                            subtitle = stringResource(R.string.settings_ca_certificate_subtitle),
-                            icon = TablerIcons.Shield,
-                            onClick = {
-                                val path = LocalProxyManager.exportCACert(context)
-                                Toast.makeText(context, resources.getString(R.string.settings_cert_exported, path), Toast.LENGTH_LONG).show()
-                            }
-                        )
-                    }
+                SettingSectionCard(
+                    title = stringResource(R.string.settings_section_privacy),
+                    icon = TablerIcons.Shield
+                ) {
+                    SettingSwitchTile(
+                        title = stringResource(R.string.settings_telemetry),
+                        subtitle = stringResource(R.string.settings_telemetry_subtitle),
+                        icon = TablerIcons.EyeOff,
+                        checked = telemetryEnabled,
+                        onCheckedChange = { enabled ->
+                            telemetryEnabled = enabled
+                            Telemetry.setEnabled(context, enabled)
+                        }
+                    )
                 }
             }
 
@@ -936,13 +1216,7 @@ fun SettingsContent(
                         )
 
                         HorizontalDivider(modifier = Modifier.padding(start = 44.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.12f))
-
-                        SettingTile(
-                            title = stringResource(R.string.settings_crash_test),
-                            subtitle = stringResource(R.string.settings_crash_test_subtitle),
-                            icon = TablerIcons.AlertTriangle,
-                            onClick = { throw IllegalStateException(resources.getString(R.string.settings_crash_test_exception)) }
-                        )
+                        DeviceInfoExportTile()
                     }
                 }
             }
@@ -951,14 +1225,33 @@ fun SettingsContent(
         }
     }
 
-    if (showPaletteDialog) {
-        PaletteDialog(
-            currentSeed = paletteSeed,
-            onSave = { hex ->
-                onPaletteSeedChange(hex)
-                showPaletteDialog = false
+    if (showThemeDialog) {
+        ThemeDialog(
+            currentPreset = themePreset,
+            currentSecondary = themeSecondary,
+            onSelect = { id ->
+                onThemePresetChange(id)
             },
-            onDismiss = { showPaletteDialog = false }
+            onSecondaryChange = { color ->
+                onThemeSecondaryChange(color)
+            },
+            onDismiss = { showThemeDialog = false }
+        )
+    }
+
+    if (showLanguageDialog) {
+        LanguageDialog(
+            current = appLanguage,
+            systemLabel = stringResource(R.string.settings_language_system),
+            onSelect = { tag ->
+                showLanguageDialog = false
+                if (tag != appLanguage) {
+                    appLanguage = tag
+                    AppLocale.set(context, tag)
+                    applyLanguageRestart()
+                }
+            },
+            onDismiss = { showLanguageDialog = false }
         )
     }
 
@@ -1026,22 +1319,6 @@ fun SettingsContent(
         )
     }
 
-    if (showConnectionModeDialog) {
-        SingleChoiceDialog(
-            title = stringResource(R.string.settings_connection_mode),
-            options = listOf(
-                "normal" to stringResource(R.string.settings_connection_normal),
-                "proxy" to stringResource(R.string.settings_connection_proxy)
-            ),
-            selected = connectionMode,
-            onSelect = { value ->
-                connectionMode = value
-                onConnectionModeChange(value)
-            },
-            onDismiss = { showConnectionModeDialog = false }
-        )
-    }
-
     if (showAutoPlayDialog) {
         SingleChoiceDialog(
             title = stringResource(R.string.settings_autoplay_mode),
@@ -1064,6 +1341,7 @@ fun SettingsContent(
             title = stringResource(R.string.settings_player_mode),
             options = listOf(
                 "spotilol" to stringResource(R.string.settings_player_spotilol),
+                "fullscreen" to stringResource(R.string.settings_player_fullscreen),
                 "original" to stringResource(R.string.settings_player_original)
             ),
             selected = playerMode,
@@ -1076,13 +1354,68 @@ fun SettingsContent(
     }
 
     if (showLyricsStyleDialog) {
-        SingleChoiceDialog(
-            title = stringResource(R.string.settings_lyrics_style),
-            options = LyricsTheme.STYLE_OPTIONS.map { it.first to stringResource(it.second) },
-            selected = lyricsStyle,
-            onSelect = { value ->
+        LyricsStyleDialog(
+            selectedId = lyricsPresetId,
+            preset = lyricsStyle,
+            scale = lyricsScale,
+            spacing = lyricsSpacing,
+            align = lyricsAlign,
+            animate = lyricsAnimate,
+            onSelectBuiltIn = { value ->
                 lyricsStyle = value
-                prefs.edit().putString("LyricsStyle", value).apply()
+                lyricsPresetId = value
+                prefs.edit()
+                    .putString("LyricsStyle", value)
+                    .putString("LyricsPresetId", value)
+                    .apply()
+            },
+            onSelectCustom = { custom ->
+                val style = custom.style
+                lyricsStyle = style.preset
+                lyricsScale = style.scale
+                lyricsSpacing = style.spacing
+                lyricsAlign = style.align
+                lyricsAnimate = style.animate
+                lyricsPresetId = custom.id
+                prefs.edit()
+                    .putString("LyricsStyle", style.preset)
+                    .putFloat("LyricsScale", style.scale)
+                    .putFloat("LyricsSpacing", style.spacing)
+                    .putString("LyricsAlign", style.align)
+                    .putBoolean("LyricsAnimate", style.animate)
+                    .putString("LyricsPresetId", custom.id)
+                    .apply()
+            },
+            onDeleteCustom = { id ->
+                CustomLyricsPresets.remove(id)
+                if (lyricsPresetId == id) {
+                    lyricsPresetId = lyricsStyle
+                    prefs.edit().putString("LyricsPresetId", lyricsStyle).apply()
+                }
+            },
+            onSaveCurrent = { name ->
+                val saved = CustomLyricsPresets.add(
+                    name,
+                    LyricsStyle(lyricsStyle, lyricsScale, lyricsSpacing, lyricsAlign, lyricsAnimate)
+                )
+                lyricsPresetId = saved.id
+                prefs.edit().putString("LyricsPresetId", saved.id).apply()
+            },
+            onScaleChange = { value ->
+                lyricsScale = value
+                prefs.edit().putFloat("LyricsScale", value).apply()
+            },
+            onSpacingChange = { value ->
+                lyricsSpacing = value
+                prefs.edit().putFloat("LyricsSpacing", value).apply()
+            },
+            onAlignChange = { value ->
+                lyricsAlign = value
+                prefs.edit().putString("LyricsAlign", value).apply()
+            },
+            onAnimateChange = { value ->
+                lyricsAnimate = value
+                prefs.edit().putBoolean("LyricsAnimate", value).apply()
             },
             onDismiss = { showLyricsStyleDialog = false }
         )
@@ -1105,6 +1438,47 @@ fun SettingsContent(
         )
     }
 
+    if (showLyricsSourceDialog) {
+        SingleChoiceDialog(
+            title = stringResource(R.string.settings_dl_lyrics_source),
+            options = listOf(
+                LyricsSource.AUTO.id to stringResource(R.string.settings_dl_lyrics_source_auto),
+                LyricsSource.YOUTUBE.id to stringResource(R.string.settings_dl_lyrics_source_youtube),
+                LyricsSource.SPOTIFY.id to stringResource(R.string.settings_dl_lyrics_source_spotify),
+            ),
+            selected = dlLyricsSource.id,
+            onSelect = { value ->
+                val source = LyricsSource.from(value)
+                dlLyricsSource = source
+                DownloadPrefs.setLyricsSource(context, source)
+            },
+            onDismiss = { showLyricsSourceDialog = false }
+        )
+    }
+
+    if (showInnertubeCacheDialog) {
+        SingleChoiceDialog(
+            title = stringResource(R.string.settings_innertube_cache),
+            options = InnertubeCachePrefs.OPTIONS_MB.map { mb ->
+                mb.toString() to if (mb == InnertubeCachePrefs.UNLIMITED) {
+                    stringResource(R.string.settings_innertube_cache_unlimited)
+                } else {
+                    stringResource(R.string.settings_innertube_cache_mb, mb)
+                }
+            },
+            selected = innertubeCacheMb.toString(),
+            onSelect = { value ->
+                val mb = value.toIntOrNull() ?: InnertubeCachePrefs.DEFAULT_MB
+                if (mb != innertubeCacheMb) {
+                    innertubeCacheMb = mb
+                    InnertubeCachePrefs.setMb(context, mb)
+                    applyInnertubeCacheLimit()
+                }
+            },
+            onDismiss = { showInnertubeCacheDialog = false }
+        )
+    }
+
     if (showFolderDialog) {
         DownloadFolderDialog(
             currentPath = dlFolderPath,
@@ -1122,22 +1496,24 @@ fun SettingsContent(
         )
     }
 
-    if (showGuiModeDialog) {
-        SingleChoiceDialog(
-            title = stringResource(R.string.settings_gui_hack_mode),
-            options = listOf(
-                "csshack" to stringResource(R.string.settings_gui_mode_css_js),
-                "bigwindow" to stringResource(R.string.settings_gui_mode_wide),
-                "none" to stringResource(R.string.settings_gui_mode_none)
-            ),
-            selected = guiMode,
-            onSelect = { value ->
-                guiMode = value
-                prefs.edit().putString("GuiMode", value).apply()
-            },
-            onDismiss = { showGuiModeDialog = false }
-        )
-    }
+    // dead code: gui mode selector dialog. wide window and none were never implemented,
+    // the webview is always injected with the mobile css and js hack.
+    // if (showGuiModeDialog) {
+    //     SingleChoiceDialog(
+    //         title = stringResource(R.string.settings_gui_hack_mode),
+    //         options = listOf(
+    //             "csshack" to stringResource(R.string.settings_gui_mode_css_js),
+    //             "bigwindow" to stringResource(R.string.settings_gui_mode_wide),
+    //             "none" to stringResource(R.string.settings_gui_mode_none)
+    //         ),
+    //         selected = guiMode,
+    //         onSelect = { value ->
+    //             guiMode = value
+    //             prefs.edit().putString("GuiMode", value).apply()
+    //         },
+    //         onDismiss = { showGuiModeDialog = false }
+    //     )
+    // }
 
     if (showCustomCssDialog) {
         CustomCssDialog(
@@ -1178,199 +1554,573 @@ fun SettingsContent(
         )
     }
 
+    if (showClearThirdPartyDialog) {
+        ConfirmationDialog(
+            title = stringResource(R.string.settings_clear_third_party),
+            message = stringResource(R.string.settings_clear_third_party_message),
+            confirmText = stringResource(R.string.settings_clear_third_party),
+            onConfirm = {
+                showClearThirdPartyDialog = false
+                onClearThirdParty()
+            },
+            onDismiss = { showClearThirdPartyDialog = false }
+        )
+    }
+
     if (showDevlogDialog) {
         LoggerDialog(onDismiss = { showDevlogDialog = false })
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun PaletteDialog(
-    currentSeed: String?,
-    onSave: (String?) -> Unit,
-    onDismiss: () -> Unit
-) {
-    val initial = parsePaletteColor(currentSeed) ?: Color(0xFFE0E0E0)
-    var red by remember { mutableFloatStateOf(initial.red * 255f) }
-    var green by remember { mutableFloatStateOf(initial.green * 255f) }
-    var blue by remember { mutableFloatStateOf(initial.blue * 255f) }
-    var useDefault by remember { mutableStateOf(currentSeed.isNullOrBlank()) }
-    val preview = Color(red / 255f, green / 255f, blue / 255f)
+private fun DeviceInfoExportTile() {
+    val context = LocalContext.current
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
 
-    fun pick(hex: String?) {
-        val c = parsePaletteColor(hex)
-        if (c == null) {
-            useDefault = true
-            red = 224f
-            green = 224f
-            blue = 224f
-        } else {
-            useDefault = false
-            red = c.red * 255f
-            green = c.green * 255f
-            blue = c.blue * 255f
-        }
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(28.dp),
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = TablerIcons.ColorSwatch,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    text = stringResource(R.string.settings_accent_color),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(34.dp)
-                            .clip(CircleShape)
-                            .background(preview)
-                            .border(
-                                1.dp,
-                                MaterialTheme.colorScheme.outline.copy(alpha = 0.3f),
-                                CircleShape
-                            )
+    SettingTile(
+        title = stringResource(R.string.settings_device_info),
+        subtitle = stringResource(R.string.settings_device_info_subtitle),
+        icon = TablerIcons.DeviceMobile,
+        onClick = {
+            scope.launch {
+                val report = withContext(Dispatchers.IO) {
+                    runCatching { DeviceInfo.build(context) }.getOrNull()
+                }
+                if (report != null) {
+                    clipboard.setClipEntry(
+                        ClipData.newPlainText("spotilol_device_info", report).toClipEntry()
                     )
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Text(
-                            text = stringResource(R.string.settings_custom_accent_color),
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            text = if (useDefault) stringResource(R.string.settings_default_scheme) else formatHex(preview),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.settings_device_info_copied),
+                        Toast.LENGTH_SHORT
+                    ).show()
+                } else {
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.settings_device_info_failed),
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
-
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    PalettePresets.forEach { (label, hex) ->
-                        val color = parsePaletteColor(hex) ?: Color(0xFFE0E0E0)
-                        val isSelected = if (hex == null) {
-                            currentSeed.isNullOrBlank()
-                        } else {
-                            hex == currentSeed
-                        }
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier.width(52.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .clip(CircleShape)
-                                    .background(color)
-                                    .border(
-                                        width = if (isSelected) 3.dp else 1.dp,
-                                        color = if (isSelected) {
-                                            MaterialTheme.colorScheme.onSurface
-                                        } else {
-                                            MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
-                                        },
-                                        shape = CircleShape
-                                    )
-                                    .clickable { pick(hex) },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                if (isSelected) {
-                                    Icon(
-                                        imageVector = TablerIcons.Check,
-                                        contentDescription = null,
-                                        tint = if (color.luminance() > 0.5f) {
-                                            Color(0xFF1A1A1A)
-                                        } else {
-                                            Color.White
-                                        },
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                text = stringResource(label),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (isSelected) {
-                                    MaterialTheme.colorScheme.onSurface
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-
-                HorizontalDivider()
-
-                ColorSlider(stringResource(R.string.settings_color_red), red, { red = it; useDefault = false }, Color(0xFFF44336))
-                ColorSlider(stringResource(R.string.settings_color_green), green, { green = it; useDefault = false }, Color(0xFF4CAF50))
-                ColorSlider(stringResource(R.string.settings_color_blue), blue, { blue = it; useDefault = false }, Color(0xFF2196F3))
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                onSave(if (useDefault) null else formatHex(preview))
-            }) {
-                Text(stringResource(R.string.settings_apply), fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(stringResource(R.string.settings_cancel), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun ColorSlider(
-    label: String,
-    value: Float,
-    onValueChange: (Float) -> Unit,
-    color: Color
+fun ThemeDialog(
+    currentPreset: String,
+    currentSecondary: Color?,
+    onSelect: (String) -> Unit,
+    onSecondaryChange: (Color?) -> Unit,
+    onDismiss: () -> Unit
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var query by remember { mutableStateOf("") }
+    var selected by remember { mutableStateOf(currentPreset) }
+    var secondary by remember { mutableStateOf(currentSecondary) }
+    var editing by remember { mutableStateOf(false) }
+    val hueState = rememberSliderState(
+        value = currentSecondary?.let { ThemeHarmony.hueOf(it) }
+            ?: ThemeHarmony.hueOf(ThemePresets.resolve(currentPreset).alt),
+        trackRange = 0f..360f
+    )
+    val strengthState = rememberSliderState(value = 1f, trackRange = 0f..1f)
+
+    val basePalette = ThemePresets.resolve(selected)
+    val pending = if (editing) ThemeHarmony.harmonize(basePalette.alt, hueState.value, strengthState.value) else secondary
+    val previewPalette = basePalette.harmonized(pending)
+    val previewPreset = ThemePresets.find(selected)
+    val suggestions = ThemeHarmony.suggestedHues(basePalette)
+    val activeHue = pending?.let { ThemeHarmony.hueOf(it) }
+
+    fun applySecondary(nextHue: Float, nextStrength: Float, commit: Boolean) {
+        hueState.value = nextHue
+        strengthState.value = nextStrength
+        editing = true
+        if (commit) {
+            val color = ThemeHarmony.harmonize(basePalette.alt, nextHue, nextStrength)
+            secondary = color
+            onSecondaryChange(color)
+        }
+    }
+
+    fun resetSecondary() {
+        editing = false
+        secondary = null
+        hueState.value = ThemeHarmony.hueOf(basePalette.alt)
+        onSecondaryChange(null)
+    }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(ThemeShare.MIME_TYPE)
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val preset = ThemePresets.find(selected) ?: return@rememberLauncherForActivityResult
+        scope.launch {
+            val payload = ThemeShare.encode(listOf(preset.copy(palette = preset.palette.harmonized(secondary))))
+            val done = runCatching {
+                withContext(Dispatchers.IO) { ThemeShare.write(context, uri, payload) }
+            }.isSuccess
+            Toast.makeText(
+                context,
+                if (done) R.string.theme_export_done else R.string.theme_export_failed,
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val result = runCatching {
+                val payload = withContext(Dispatchers.IO) { ThemeShare.read(context, uri) }
+                ThemeShare.decode(payload)
+            }
+            result.onSuccess { themes ->
+                val imported = ThemeController.importThemes(themes)
+                imported.firstOrNull()?.let { first ->
+                    selected = first.id
+                    editing = false
+                    secondary = null
+                    hueState.value = ThemeHarmony.hueOf(first.palette.alt)
+                    onSecondaryChange(null)
+                    onSelect(first.id)
+                }
+                Toast.makeText(
+                    context,
+                    context.getString(R.string.theme_import_done, imported.size),
+                    Toast.LENGTH_SHORT
+                ).show()
+            }.onFailure {
+                Toast.makeText(context, R.string.theme_import_failed, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val visiblePresets = query.trim().let { raw ->
+        if (raw.isBlank()) ThemePresets.all
+        else ThemePresets.all.filter {
+            it.family.contains(raw, true) || it.name.contains(raw, true) || it.id.contains(raw, true)
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(0.95f)
+                .fillMaxHeight(0.88f),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 6.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = TablerIcons.Palette,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        text = stringResource(R.string.settings_theme),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+                        Icon(
+                            imageVector = TablerIcons.X,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+
+                Row(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                    ) {
+                        OutlinedTextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            leadingIcon = {
+                                Icon(TablerIcons.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                            },
+                            placeholder = {
+                                Text(
+                                    text = stringResource(R.string.theme_search),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1
+                                )
+                            },
+                            textStyle = MaterialTheme.typography.bodySmall,
+                            shape = RoundedCornerShape(14.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+                            )
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        if (visiblePresets.isEmpty()) {
+                            Text(
+                                text = stringResource(R.string.theme_no_results),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            LazyColumn(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                items(visiblePresets, key = { it.id }) { preset ->
+                                    ThemePresetRow(
+                                        preset = preset,
+                                        selected = preset.id == selected,
+                                        custom = ThemePresets.isCustom(preset.id),
+                                        onClick = {
+                                            selected = preset.id
+                                            editing = false
+                                            hueState.value = ThemeHarmony.hueOf(secondary ?: preset.palette.alt)
+                                            onSelect(preset.id)
+                                        },
+                                        onDelete = {
+                                            ThemeController.removeCustomTheme(preset.id)
+                                            if (selected == preset.id) {
+                                                selected = ThemePresets.DEFAULT_ID
+                                                editing = false
+                                                secondary = null
+                                                onSecondaryChange(null)
+                                                onSelect(ThemePresets.DEFAULT_ID)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .padding(horizontal = 10.dp)
+                            .width(1.dp)
+                            .fillMaxHeight()
+                            .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(
+                            text = stringResource(R.string.theme_preview),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        ThemePreviewCard(
+                            palette = previewPalette,
+                            title = previewPreset?.family ?: selected,
+                            subtitle = previewPreset?.name ?: selected
+                        )
+
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            text = stringResource(R.string.theme_secondary_title),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = stringResource(R.string.theme_secondary_hint),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            suggestions.forEach { suggestion ->
+                                val active = activeHue != null && abs(activeHue - suggestion) < 8f
+                                Box(
+                                    modifier = Modifier
+                                        .size(26.dp)
+                                        .clip(CircleShape)
+                                        .background(ThemeHarmony.harmonize(basePalette.alt, suggestion, strengthState.value))
+                                        .border(
+                                            width = if (active) 2.dp else 1.dp,
+                                            color = if (active) MaterialTheme.colorScheme.primary
+                                            else MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+                                            shape = CircleShape
+                                        )
+                                        .clickable { applySecondary(suggestion, strengthState.value, true) }
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            text = stringResource(R.string.theme_hue),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Slider(
+                            state = hueState,
+                            onValueChange = { applySecondary(it, strengthState.value, false) },
+                            onValueChangeFinished = { applySecondary(hueState.value, strengthState.value, true) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            text = stringResource(R.string.theme_strength),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Slider(
+                            state = strengthState,
+                            onValueChange = { applySecondary(hueState.value, it, false) },
+                            onValueChangeFinished = { applySecondary(hueState.value, strengthState.value, true) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            TextButton(onClick = { resetSecondary() }, enabled = pending != null) {
+                                Text(
+                                    text = stringResource(R.string.theme_secondary_reset),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(1.dp)
+                                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                        )
+                        Spacer(Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    val preset = ThemePresets.find(selected) ?: return@OutlinedButton
+                                    exportLauncher.launch(ThemeShare.fileName(preset.family, preset.name))
+                                },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
+                            ) {
+                                Icon(TablerIcons.FileUpload, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = stringResource(R.string.theme_export),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = { importLauncher.launch(arrayOf(ThemeShare.MIME_TYPE, "*/*")) },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp)
+                            ) {
+                                Icon(TablerIcons.FileDownload, contentDescription = null, modifier = Modifier.size(14.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = stringResource(R.string.theme_import),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemePresetRow(
+    preset: ThemePreset,
+    selected: Boolean,
+    custom: Boolean,
+    onClick: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val subtitle = if (custom) "${preset.name} · ${stringResource(R.string.theme_custom)}" else preset.name
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(if (selected) MaterialTheme.colorScheme.surfaceVariant else Color.Transparent)
+            .clickable(onClick = onClick)
+            .padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .background(preset.palette.accent)
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f), CircleShape)
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = preset.family,
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (custom) {
+            IconButton(onClick = onDelete, modifier = Modifier.size(28.dp)) {
+                Icon(
+                    imageVector = TablerIcons.Trash,
+                    contentDescription = stringResource(R.string.theme_delete),
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+        } else if (selected) {
+            Icon(
+                imageVector = TablerIcons.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+        }
+    }
+}
+
+@Composable
+private fun ThemePreviewCard(
+    palette: ThemePalette,
+    title: String,
+    subtitle: String
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(palette.bg)
+            .border(1.dp, palette.outline, RoundedCornerShape(16.dp))
+            .padding(10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(palette.accent)
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = palette.fg,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.fgMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .clip(CircleShape)
+                    .background(palette.alt)
+            )
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            listOf(
+                palette.bg,
+                palette.panel,
+                palette.panelHigh,
+                palette.accent,
+                palette.alt,
+                palette.fg,
+                palette.fgMuted,
+                palette.outline
+            ).forEach { swatch ->
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(14.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(swatch)
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            ThemePreviewChip("Aa", palette.accent, palette.onAccent)
+            ThemePreviewChip("Aa", palette.alt, palette.onAlt)
+            ThemePreviewChip("Aa", palette.panelHigh, palette.fg)
+        }
+    }
+}
+
+@Composable
+private fun ThemePreviewChip(label: String, background: Color, foreground: Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(background)
+            .padding(horizontal = 10.dp, vertical = 4.dp)
+    ) {
         Text(
             text = label,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.width(52.dp)
-        )
-        Slider(
-            value = value,
-            onValueChange = onValueChange,
-            valueRange = 0f..255f,
-            modifier = Modifier.weight(1f),
-            colors = SliderDefaults.colors(
-                thumbColor = color,
-                activeTrackColor = color,
-                inactiveTrackColor = color.copy(alpha = 0.2f)
-            )
-        )
-        Text(
-            text = value.roundToInt().toString(),
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.width(30.dp),
-            textAlign = TextAlign.End
+            style = MaterialTheme.typography.labelSmall,
+            color = foreground
         )
     }
 }
@@ -1471,19 +2221,26 @@ fun SettingTile(
     subtitle: String,
     icon: ImageVector? = null,
     painter: Painter? = null,
-    onClick: () -> Unit,
+    onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
     isDestructive: Boolean = false,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    info: String? = null
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (enabled) Modifier else Modifier.alpha(0.38f))
-            .combinedClickable(
-                enabled = enabled,
-                onClick = onClick,
-                onLongClick = onLongClick
+            .then(
+                if (onClick != null || onLongClick != null) {
+                    Modifier.combinedClickable(
+                        enabled = enabled,
+                        onClick = { onClick?.invoke() },
+                        onLongClick = onLongClick
+                    )
+                } else {
+                    Modifier
+                }
             )
             .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
@@ -1510,14 +2267,21 @@ fun SettingTile(
         }
         if (painter != null || icon != null) Spacer(Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
-                color = if (isDestructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium,
+                    color = if (isDestructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false)
+                )
+                if (info != null) {
+                    Spacer(Modifier.width(6.dp))
+                    InfoTooltip(text = info)
+                }
+            }
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
@@ -1526,13 +2290,15 @@ fun SettingTile(
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Spacer(Modifier.width(8.dp))
-        Icon(
-            imageVector = TablerIcons.ChevronRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-            modifier = Modifier.size(16.dp)
-        )
+        if (onClick != null) {
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                imageVector = TablerIcons.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.size(16.dp)
+            )
+        }
     }
 }
 
@@ -1638,6 +2404,587 @@ fun ProfileRow(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun LyricsStyleDialog(
+    selectedId: String,
+    preset: String,
+    scale: Float,
+    spacing: Float,
+    align: String,
+    animate: Boolean,
+    onSelectBuiltIn: (String) -> Unit,
+    onSelectCustom: (LyricsPreset) -> Unit,
+    onDeleteCustom: (String) -> Unit,
+    onSaveCurrent: (String) -> Unit,
+    onScaleChange: (Float) -> Unit,
+    onSpacingChange: (Float) -> Unit,
+    onAlignChange: (String) -> Unit,
+    onAnimateChange: (Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val wide = LocalConfiguration.current.screenWidthDp >= LYRICS_WIDE_BREAKPOINT
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val customs = CustomLyricsPresets.list
+    var showSaveDialog by remember { mutableStateOf(false) }
+    var saveName by remember { mutableStateOf("") }
+
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(LyricsPresetShare.MIME_TYPE)
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val payload = LyricsPresetShare.encode(customs.toList())
+        scope.launch {
+            val done = runCatching {
+                withContext(Dispatchers.IO) { LyricsPresetShare.write(context, uri, payload) }
+            }.isSuccess
+            Toast.makeText(
+                context,
+                if (done) R.string.settings_lyrics_export_done else R.string.settings_lyrics_export_failed,
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val result = runCatching {
+                val payload = withContext(Dispatchers.IO) { LyricsPresetShare.read(context, uri) }
+                LyricsPresetShare.decode(payload)
+            }
+            result.onSuccess { presets ->
+                val added = CustomLyricsPresets.addAll(presets)
+                added.lastOrNull()?.let(onSelectCustom)
+                Toast.makeText(context, R.string.settings_lyrics_import_done, Toast.LENGTH_SHORT).show()
+            }.onFailure {
+                Toast.makeText(context, R.string.settings_lyrics_import_failed, Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    val exportAction = {
+        if (customs.isEmpty()) {
+            Toast.makeText(context, R.string.settings_lyrics_export_empty, Toast.LENGTH_SHORT).show()
+        } else {
+            exportLauncher.launch(LyricsPresetShare.fileName())
+        }
+    }
+    val saveAction = {
+        saveName = ""
+        showSaveDialog = true
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(if (wide) 0.92f else 0.95f)
+                .fillMaxHeight(if (wide) 0.92f else 0.9f),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 6.dp
+        ) {
+            Column(modifier = Modifier.fillMaxSize().padding(18.dp)) {
+                LyricsDialogHeader(onDismiss)
+                Spacer(Modifier.height(14.dp))
+                if (wide) {
+                    Row(
+                        modifier = Modifier.fillMaxSize(),
+                        horizontalArrangement = Arrangement.spacedBy(18.dp)
+                    ) {
+                        LyricsPresetList(
+                            selectedId = selectedId,
+                            customs = customs,
+                            onSelectBuiltIn = onSelectBuiltIn,
+                            onSelectCustom = onSelectCustom,
+                            onDeleteCustom = onDeleteCustom,
+                            onSaveCurrent = saveAction,
+                            onExport = exportAction,
+                            onImport = { importLauncher.launch(arrayOf(LyricsPresetShare.MIME_TYPE, "*/*")) },
+                            modifier = Modifier
+                                .weight(0.40f)
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState())
+                        )
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp)
+                                .fillMaxHeight()
+                                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+                        )
+                        LyricsTuning(
+                            preset = preset,
+                            scale = scale,
+                            spacing = spacing,
+                            align = align,
+                            animate = animate,
+                            onScaleChange = onScaleChange,
+                            onSpacingChange = onSpacingChange,
+                            onAlignChange = onAlignChange,
+                            onAnimateChange = onAnimateChange,
+                            modifier = Modifier
+                                .weight(0.60f)
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState())
+                        )
+                    }
+                } else {
+                    Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                        LyricsPresetList(
+                            selectedId = selectedId,
+                            customs = customs,
+                            onSelectBuiltIn = onSelectBuiltIn,
+                            onSelectCustom = onSelectCustom,
+                            onDeleteCustom = onDeleteCustom,
+                            onSaveCurrent = saveAction,
+                            onExport = exportAction,
+                            onImport = { importLauncher.launch(arrayOf(LyricsPresetShare.MIME_TYPE, "*/*")) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        LyricsTuning(
+                            preset = preset,
+                            scale = scale,
+                            spacing = spacing,
+                            align = align,
+                            animate = animate,
+                            onScaleChange = onScaleChange,
+                            onSpacingChange = onSpacingChange,
+                            onAlignChange = onAlignChange,
+                            onAnimateChange = onAnimateChange,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    if (showSaveDialog) {
+        AlertDialog(
+            onDismissRequest = { showSaveDialog = false },
+            shape = RoundedCornerShape(24.dp),
+            title = {
+                Text(
+                    text = stringResource(R.string.settings_lyrics_save_preset),
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                OutlinedTextField(
+                    value = saveName,
+                    onValueChange = { saveName = it },
+                    singleLine = true,
+                    label = { Text(stringResource(R.string.settings_lyrics_preset_name)) },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onSaveCurrent(saveName)
+                        showSaveDialog = false
+                        Toast.makeText(context, R.string.settings_lyrics_preset_saved, Toast.LENGTH_SHORT).show()
+                    },
+                    enabled = saveName.isNotBlank()
+                ) {
+                    Text(stringResource(R.string.settings_save), fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSaveDialog = false }) {
+                    Text(
+                        stringResource(R.string.settings_cancel),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        )
+    }
+}
+
+@Composable
+private fun LyricsDialogHeader(onDismiss: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+            imageVector = TablerIcons.Playlist,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(22.dp)
+        )
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.settings_lyrics_style),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = stringResource(R.string.settings_lyrics_editor_subtitle),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        IconButton(onClick = onDismiss) {
+            Icon(
+                imageVector = TablerIcons.X,
+                contentDescription = stringResource(R.string.settings_close),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun LyricsPresetList(
+    selectedId: String,
+    customs: List<LyricsPreset>,
+    onSelectBuiltIn: (String) -> Unit,
+    onSelectCustom: (LyricsPreset) -> Unit,
+    onDeleteCustom: (String) -> Unit,
+    onSaveCurrent: () -> Unit,
+    onExport: () -> Unit,
+    onImport: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            text = stringResource(R.string.settings_lyrics_presets),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        LyricsTheme.STYLE_OPTIONS.forEach { (value, labelRes) ->
+            LyricsPresetRow(
+                label = stringResource(labelRes),
+                selected = value == selectedId,
+                onClick = { onSelectBuiltIn(value) }
+            )
+        }
+
+        if (customs.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = stringResource(R.string.settings_lyrics_custom_presets),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            customs.forEach { custom ->
+                LyricsPresetRow(
+                    label = custom.name,
+                    selected = custom.id == selectedId,
+                    onClick = { onSelectCustom(custom) },
+                    onDelete = { onDeleteCustom(custom.id) }
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = stringResource(R.string.settings_lyrics_actions),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Button(
+            onClick = onSaveCurrent,
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp)
+        ) {
+            Icon(TablerIcons.Plus, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = stringResource(R.string.settings_lyrics_save_preset),
+                style = MaterialTheme.typography.labelLarge,
+                maxLines = 1
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = onExport,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                ),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+            ) {
+                Icon(TablerIcons.FileUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.settings_lyrics_export),
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1
+                )
+            }
+            OutlinedButton(
+                onClick = onImport,
+                modifier = Modifier.weight(1f),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                    contentColor = MaterialTheme.colorScheme.onSurface
+                ),
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+            ) {
+                Icon(TablerIcons.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = stringResource(R.string.settings_lyrics_import),
+                    style = MaterialTheme.typography.labelMedium,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LyricsPresetRow(
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    onDelete: (() -> Unit)? = null
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                if (selected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.22f)
+                else Color.Transparent
+            )
+            .clickable(onClick = onClick)
+            .padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f).padding(vertical = 6.dp)
+        )
+        if (selected) {
+            Icon(
+                imageVector = TablerIcons.Check,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+        if (onDelete != null) {
+            IconButton(onClick = onDelete, modifier = Modifier.size(30.dp)) {
+                Icon(
+                    imageVector = TablerIcons.Trash,
+                    contentDescription = stringResource(R.string.settings_delete),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LyricsTuning(
+    preset: String,
+    scale: Float,
+    spacing: Float,
+    align: String,
+    animate: Boolean,
+    onScaleChange: (Float) -> Unit,
+    onSpacingChange: (Float) -> Unit,
+    onAlignChange: (String) -> Unit,
+    onAnimateChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val scaleState = rememberSliderState(value = scale, trackRange = LyricsTheme.SCALE_MIN..LyricsTheme.SCALE_MAX)
+    val spacingState = rememberSliderState(value = spacing, trackRange = LyricsTheme.SPACING_MIN..LyricsTheme.SPACING_MAX)
+    val preview = LyricsTheme.previewStyle(
+        LyricsStyle(preset, scaleState.value, spacingState.value, align, animate)
+    )
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = stringResource(R.string.settings_lyrics_preview),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        LyricsPreviewCard(preview = preview, align = align)
+
+        Column {
+            LyricsTuningLabel(stringResource(R.string.settings_lyrics_size), "${"%.2f".format(scaleState.value)}×")
+            Slider(
+                state = scaleState,
+                onValueChange = { scaleState.value = it },
+                onValueChangeFinished = { onScaleChange(scaleState.value) },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Column {
+            LyricsTuningLabel(stringResource(R.string.settings_lyrics_spacing), "${"%.2f".format(spacingState.value)}×")
+            Slider(
+                state = spacingState,
+                onValueChange = { spacingState.value = it },
+                onValueChangeFinished = { onSpacingChange(spacingState.value) },
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+
+        Column {
+            LyricsTuningLabel(stringResource(R.string.settings_lyrics_alignment), null)
+            Spacer(Modifier.height(4.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LyricsTheme.ALIGN_OPTIONS.forEach { option ->
+                    val labelRes = when (option) {
+                        LyricsTheme.ALIGN_CENTER -> R.string.settings_lyrics_align_center
+                        LyricsTheme.ALIGN_END -> R.string.settings_lyrics_align_end
+                        else -> R.string.settings_lyrics_align_start
+                    }
+                    FilterChip(
+                        selected = option == align,
+                        onClick = { onAlignChange(option) },
+                        label = {
+                            Text(
+                                text = stringResource(labelRes),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    )
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .clickable { onAnimateChange(!animate) }
+                .padding(horizontal = 4.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.settings_lyrics_animation),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Text(
+                    text = stringResource(R.string.settings_lyrics_animation_hint),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(
+                checked = animate,
+                onCheckedChange = onAnimateChange,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                    checkedTrackColor = MaterialTheme.colorScheme.primary
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun LyricsTuningLabel(title: String, value: String?) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        if (value != null) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@Composable
+private fun LyricsPreviewCard(preview: LyricsTheme.PreviewStyle, align: String) {
+    val textAlign = when (align) {
+        LyricsTheme.ALIGN_CENTER -> TextAlign.Center
+        LyricsTheme.ALIGN_END -> TextAlign.End
+        else -> TextAlign.Start
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.5f)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            LyricsPreviewLine(
+                text = stringResource(R.string.settings_lyrics_preview_passed),
+                sizeSp = preview.baseSp,
+                lineHeightMul = preview.lineHeight,
+                weight = preview.weight,
+                opacity = preview.passedOpacity,
+                textAlign = textAlign,
+                sizeScale = 1f
+            )
+            LyricsPreviewLine(
+                text = stringResource(R.string.settings_lyrics_preview_active),
+                sizeSp = preview.baseSp,
+                lineHeightMul = preview.lineHeight,
+                weight = preview.activeWeight,
+                opacity = 1f,
+                textAlign = textAlign,
+                sizeScale = preview.activeScale
+            )
+            LyricsPreviewLine(
+                text = stringResource(R.string.settings_lyrics_preview_upcoming),
+                sizeSp = preview.baseSp,
+                lineHeightMul = preview.lineHeight,
+                weight = preview.weight,
+                opacity = preview.upcomingOpacity,
+                textAlign = textAlign,
+                sizeScale = 1f
+            )
+        }
+    }
+}
+
+@Composable
+private fun LyricsPreviewLine(
+    text: String,
+    sizeSp: Float,
+    lineHeightMul: Float,
+    weight: Int,
+    opacity: Float,
+    textAlign: TextAlign,
+    sizeScale: Float
+) {
+    val size = sizeSp * sizeScale
+    Text(
+        text = text,
+        fontSize = size.sp,
+        lineHeight = (size * lineHeightMul).sp,
+        fontWeight = FontWeight(weight),
+        textAlign = textAlign,
+        color = MaterialTheme.colorScheme.onSurface.copy(alpha = opacity),
+        modifier = Modifier.fillMaxWidth()
+    )
+}
+
 @Composable
 fun SingleChoiceDialog(
     title: String,
@@ -1657,7 +3004,10 @@ fun SingleChoiceDialog(
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
                 options.forEach { (value, label) ->
                     val isSelected = selected == value
                     Surface(
@@ -1684,6 +3034,75 @@ fun SingleChoiceDialog(
                                     onSelect(value)
                                     onDismiss()
                                 },
+                                colors = RadioButtonDefaults.colors(
+                                    selectedColor = MaterialTheme.colorScheme.primary,
+                                    unselectedColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                ),
+                                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.settings_cancel), color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    )
+}
+
+@Composable
+fun LanguageDialog(
+    current: String,
+    systemLabel: String,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(28.dp),
+        title = {
+            Text(
+                text = stringResource(R.string.settings_language),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                AppLocale.AVAILABLE.forEach { tag ->
+                    val label = AppLocale.nativeName(tag) ?: systemLabel
+                    val isSelected = current == tag
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .clickable { onSelect(tag) },
+                        color = if (isSelected) {
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+                        } else {
+                            Color.Transparent
+                        }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = isSelected,
+                                onClick = { onSelect(tag) },
                                 colors = RadioButtonDefaults.colors(
                                     selectedColor = MaterialTheme.colorScheme.primary,
                                     unselectedColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1895,6 +3314,7 @@ fun ConfirmationDialog(
 @Composable
 fun SettingsContentPreview() {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val prefs = remember { context.getSharedPreferences("preview_prefs", Context.MODE_PRIVATE) }
     SpotifyTheme {
         SettingsContent(
@@ -1910,31 +3330,36 @@ fun SettingsContentPreview() {
             onLandscapeModeChange = {},
             keepScreenOn = false,
             onKeepScreenOnChange = {},
-            paletteSeed = null,
-            onPaletteSeedChange = {},
-            onConnectionModeChange = {},
+            themePreset = ThemePresets.DEFAULT_ID,
+            onThemePresetChange = {},
+            themeSecondary = null,
+            onThemeSecondaryChange = {},
             onOfflineModeChange = {},
             onSaveProfile = { _, _ -> },
             onLoadProfile = {},
             onDeleteProfile = {},
             onClearCache = {},
             onClearData = {},
+            onClearThirdParty = {},
             blockServiceWorker = true,
             onBlockServiceWorkerChange = {}
         )
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun LoggerDialog(onDismiss: () -> Unit) {
+    val context = LocalContext.current
     var query by remember { mutableStateOf("") }
     var levelFilter by remember { mutableStateOf<LogLevel?>(null) }
     var entries by remember { mutableStateOf(Logger.entries()) }
     var expanded by remember { mutableStateOf(emptySet<Long>()) }
-    val clipboard = LocalClipboard.current
+    var autoScroll by remember { mutableStateOf(isAutoScroll(context)) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
+    val exportName = remember { LogExport.fileName() }
+    val wide = LocalConfiguration.current.screenWidthDp >= LOGGER_WIDE_BREAKPOINT
     val filtered = remember(entries, query, levelFilter) {
         LogFilter.apply(entries, query, levelFilter ?: LogLevel.VERBOSE)
     }
@@ -1942,174 +3367,469 @@ fun LoggerDialog(onDismiss: () -> Unit) {
     LaunchedEffect(Unit) {
         while (true) {
             delay(350)
+            if (Logger.count() == entries.size) continue
             val next = Logger.entries()
             val changed = next.size != entries.size || next.lastOrNull()?.id != entries.lastOrNull()?.id
             if (changed) entries = next
         }
     }
 
-    LaunchedEffect(filtered.size, filtered.lastOrNull()?.id) {
-        if (filtered.isNotEmpty()) listState.scrollToItem(filtered.size - 1)
+    LaunchedEffect(filtered.size, filtered.lastOrNull()?.id, autoScroll) {
+        if (autoScroll && filtered.isNotEmpty()) listState.scrollToItem(filtered.size - 1)
     }
 
-    AlertDialog(
+    val exportLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(LogExport.MIME_TYPE)
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val snapshot = filtered
+        val total = entries.size
+        scope.launch {
+            val done = runCatching {
+                val payload = LogExport.payload(snapshot, total, query, levelFilter)
+                withContext(Dispatchers.IO) { LogExport.write(context, uri, payload) }
+            }.isSuccess
+            Toast.makeText(
+                context,
+                if (done) R.string.logger_export_done else R.string.logger_export_failed,
+                Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
+    fun clearAll() {
+        Logger.clear()
+        entries = emptyList()
+        expanded = emptySet()
+    }
+
+    fun toggleEntry(id: Long) {
+        expanded = if (expanded.contains(id)) expanded - id else expanded + id
+    }
+
+    fun setAutoScroll(enabled: Boolean) {
+        autoScroll = enabled
+        Logger.setAutoScroll(context, enabled)
+    }
+
+    fun jumpToLatest() {
+        if (filtered.isNotEmpty()) scope.launch { listState.scrollToItem(filtered.size - 1) }
+    }
+
+    Dialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(28.dp),
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(stringResource(R.string.logger_title), fontWeight = FontWeight.Bold)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.logger_line_count, filtered.size, entries.size),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(if (wide) 0.92f else 0.95f)
+                .fillMaxHeight(if (wide) 0.92f else 0.88f),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 6.dp
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(14.dp)
+            ) {
+                LoggerHeader(
+                    shown = filtered.size,
+                    total = entries.size,
+                    onDismiss = onDismiss
                 )
-            }
-        },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                    placeholder = {
-                        Text(
-                            text = stringResource(R.string.logger_search_placeholder),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    },
-                    trailingIcon = {
-                        if (query.isNotEmpty()) {
-                            IconButton(onClick = { query = "" }) {
-                                Icon(
-                                    imageVector = TablerIcons.X,
-                                    contentDescription = stringResource(R.string.logger_clear_filter),
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
+                Spacer(Modifier.height(if (wide) 12.dp else 8.dp))
+                if (wide) {
+                    Row(modifier = Modifier.weight(1f)) {
+                        Column(
+                            modifier = Modifier
+                                .weight(0.42f)
+                                .fillMaxHeight()
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            LoggerSectionLabel(stringResource(R.string.logger_filters))
+                            Spacer(Modifier.height(6.dp))
+                            LoggerSearchField(query = query, onQueryChange = { query = it })
+                            Spacer(Modifier.height(8.dp))
+                            LoggerLevelChips(selected = levelFilter, onSelect = { levelFilter = it })
+                            Spacer(Modifier.height(10.dp))
+                            LoggerAutoScrollRow(autoScroll = autoScroll, onAutoScrollChange = { setAutoScroll(it) })
+                            Spacer(Modifier.height(12.dp))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
+                            Spacer(Modifier.height(12.dp))
+                            LoggerSectionLabel(stringResource(R.string.logger_actions))
+                            Spacer(Modifier.height(8.dp))
+                            LoggerClearButton(modifier = Modifier.fillMaxWidth(), onClear = { clearAll() })
+                            Spacer(Modifier.height(8.dp))
+                            LoggerExportButton(modifier = Modifier.fillMaxWidth()) { exportLauncher.launch(exportName) }
+                            Spacer(Modifier.height(6.dp))
+                            LoggerExportName(exportName)
                         }
-                    }
-                )
-                Spacer(Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    FilterChip(
-                        selected = levelFilter == null,
-                        onClick = { levelFilter = null },
-                        label = { Text(stringResource(R.string.logger_level_all), fontSize = 11.sp) }
-                    )
-                    LogLevel.entries.forEach { level ->
-                        val color = logLevelColor(level)
-                        FilterChip(
-                            selected = levelFilter == level,
-                            onClick = { levelFilter = level },
-                            label = {
-                                Text(
-                                    text = level.letter.toString(),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            },
-                            colors = FilterChipDefaults.filterChipColors(
-                                labelColor = color,
-                                selectedContainerColor = color.copy(alpha = 0.22f),
-                                selectedLabelColor = color
-                            )
+                        Box(
+                            modifier = Modifier
+                                .padding(horizontal = 10.dp)
+                                .width(1.dp)
+                                .fillMaxHeight()
+                                .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.14f))
                         )
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-                Surface(
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 160.dp, max = 360.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.35f)
-                ) {
-                    LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
-                        if (filtered.isEmpty()) {
-                            item {
-                                Text(
-                                    text = if (entries.isEmpty()) stringResource(R.string.logger_empty_waiting)
-                                    else stringResource(R.string.logger_empty_no_match),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(12.dp)
-                                )
-                            }
-                        }
-                        items(filtered, key = { it.id }) { entry ->
-                            LogRow(
-                                entry = entry,
-                                expanded = expanded.contains(entry.id),
-                                onToggle = {
-                                    expanded = if (expanded.contains(entry.id)) expanded - entry.id
-                                    else expanded + entry.id
-                                }
+                        Column(
+                            modifier = Modifier
+                                .weight(0.58f)
+                                .fillMaxHeight()
+                        ) {
+                            LoggerListHeader(onJumpLatest = { jumpToLatest() }, jumpEnabled = filtered.isNotEmpty())
+                            Spacer(Modifier.height(4.dp))
+                            LoggerList(
+                                entries = filtered,
+                                allEmpty = entries.isEmpty(),
+                                expanded = expanded,
+                                onToggle = { toggleEntry(it) },
+                                listState = listState,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
                             )
                         }
                     }
-                }
-            }
-        },
-        confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = {
-                    Logger.clear()
-                    entries = emptyList()
-                }) { Text(stringResource(R.string.logger_clear)) }
-
-                TextButton(onClick = {
-                    val text = LogFilter.text(filtered)
-                    scope.launch {
-                        clipboard.setClipEntry(
-                            ClipData.newPlainText("spotilol_logger", text).toClipEntry()
+                } else {
+                    Column(modifier = Modifier.weight(1f)) {
+                        LoggerSearchField(query = query, onQueryChange = { query = it })
+                        Spacer(Modifier.height(8.dp))
+                        LoggerLevelChips(selected = levelFilter, onSelect = { levelFilter = it })
+                        Spacer(Modifier.height(6.dp))
+                        LoggerAutoScrollRow(autoScroll = autoScroll, onAutoScrollChange = { setAutoScroll(it) })
+                        Spacer(Modifier.height(8.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            LoggerClearButton(modifier = Modifier.weight(1f), onClear = { clearAll() })
+                            LoggerExportButton(modifier = Modifier.weight(1f)) { exportLauncher.launch(exportName) }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        LoggerExportName(exportName)
+                        Spacer(Modifier.height(8.dp))
+                        LoggerListHeader(onJumpLatest = { jumpToLatest() }, jumpEnabled = filtered.isNotEmpty())
+                        Spacer(Modifier.height(4.dp))
+                        LoggerList(
+                            entries = filtered,
+                            allEmpty = entries.isEmpty(),
+                            expanded = expanded,
+                            onToggle = { toggleEntry(it) },
+                            listState = listState,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
                         )
                     }
-                }) { Text(stringResource(R.string.logger_copy)) }
-
-                TextButton(onClick = onDismiss) {
-                    Text(stringResource(R.string.logger_close), fontWeight = FontWeight.Bold)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun LoggerHeader(shown: Int, total: Int, onDismiss: () -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+            modifier = Modifier.size(32.dp),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.primaryContainer
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = TablerIcons.Terminal2,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(17.dp)
+                )
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = stringResource(R.string.logger_title),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = stringResource(R.string.logger_line_count, shown, total),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
+            Icon(
+                imageVector = TablerIcons.X,
+                contentDescription = stringResource(R.string.logger_close),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun LoggerSectionLabel(text: String) {
+    Text(
+        text = text,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
     )
 }
 
 @Composable
+private fun LoggerSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    OutlinedTextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier = modifier.fillMaxWidth(),
+        singleLine = true,
+        textStyle = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+        placeholder = {
+            Text(
+                text = stringResource(R.string.logger_search_placeholder),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = { onQueryChange("") }, modifier = Modifier.size(30.dp)) {
+                    Icon(
+                        imageVector = TablerIcons.X,
+                        contentDescription = stringResource(R.string.logger_clear_filter),
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
+            }
+        },
+        shape = RoundedCornerShape(14.dp),
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedBorderColor = MaterialTheme.colorScheme.primary,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
+            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f),
+            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)
+        )
+    )
+}
+
+@Composable
+private fun LoggerLevelChips(selected: LogLevel?, onSelect: (LogLevel?) -> Unit) {
+    FlowRow(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        FilterChip(
+            selected = selected == null,
+            onClick = { onSelect(null) },
+            label = {
+                Text(
+                    text = stringResource(R.string.logger_level_all),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        )
+        LogLevel.entries.forEach { level ->
+            val color = logLevelColor(level)
+            FilterChip(
+                selected = selected == level,
+                onClick = { onSelect(level) },
+                label = {
+                    Text(
+                        text = level.letter.toString(),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                },
+                colors = FilterChipDefaults.filterChipColors(
+                    labelColor = color,
+                    selectedContainerColor = color.copy(alpha = 0.22f),
+                    selectedLabelColor = color
+                )
+            )
+        }
+    }
+}
+
+@Composable
+private fun LoggerAutoScrollRow(autoScroll: Boolean, onAutoScrollChange: (Boolean) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = stringResource(R.string.logger_autoscroll),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        Switch(
+            checked = autoScroll,
+            onCheckedChange = onAutoScrollChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                checkedTrackColor = MaterialTheme.colorScheme.primary,
+                uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        )
+    }
+}
+
+@Composable
+private fun LoggerClearButton(modifier: Modifier = Modifier, onClear: () -> Unit) {
+    OutlinedButton(
+        onClick = onClear,
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Icon(TablerIcons.Trash, contentDescription = null, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = stringResource(R.string.logger_clear),
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun LoggerExportButton(modifier: Modifier = Modifier, onExport: () -> Unit) {
+    Button(
+        onClick = onExport,
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Icon(TablerIcons.FileDownload, contentDescription = null, modifier = Modifier.size(15.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = stringResource(R.string.logger_export),
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
+}
+
+@Composable
+private fun LoggerExportName(name: String) {
+    Text(
+        text = name,
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontFamily = FontFamily.Monospace,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis
+    )
+}
+
+@Composable
+private fun LoggerListHeader(onJumpLatest: () -> Unit, jumpEnabled: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        LoggerSectionLabel(stringResource(R.string.logger_entries))
+        Spacer(Modifier.weight(1f))
+        IconButton(onClick = onJumpLatest, enabled = jumpEnabled, modifier = Modifier.size(28.dp)) {
+            Icon(
+                imageVector = TablerIcons.ArrowDown,
+                contentDescription = stringResource(R.string.logger_scroll_latest),
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(15.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun LoggerList(
+    entries: List<LogEntry>,
+    allEmpty: Boolean,
+    expanded: Set<Long>,
+    onToggle: (Long) -> Unit,
+    listState: LazyListState,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.35f)
+    ) {
+        LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+            if (entries.isEmpty()) {
+                item {
+                    Text(
+                        text = if (allEmpty) stringResource(R.string.logger_empty_waiting)
+                        else stringResource(R.string.logger_empty_no_match),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(12.dp)
+                    )
+                }
+            }
+            items(entries, key = { it.id }) { entry ->
+                LogRow(
+                    entry = entry,
+                    expanded = expanded.contains(entry.id),
+                    onToggle = { onToggle(entry.id) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun LogRow(entry: LogEntry, expanded: Boolean, onToggle: () -> Unit) {
+    val clipboard = LocalClipboard.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val color = logLevelColor(entry.level)
     val dim = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+
+    fun copyEntry() {
+        scope.launch {
+            clipboard.setClipEntry(ClipData.newPlainText("spotilol_log", entry.line()).toClipEntry())
+            Toast.makeText(context, context.getString(R.string.logger_entry_copied), Toast.LENGTH_SHORT).show()
+        }
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onToggle() }
-            .padding(horizontal = 10.dp, vertical = 4.dp)
+            .combinedClickable(onClick = onToggle, onLongClick = { copyEntry() })
+            .padding(start = 8.dp, end = 2.dp, top = 2.dp, bottom = 2.dp)
     ) {
-        Text(
-            text = buildAnnotatedString {
-                withStyle(SpanStyle(color = dim)) {
-                    append(entry.time)
-                    append(' ')
-                }
-                withStyle(SpanStyle(color = color, fontWeight = FontWeight.Bold)) {
-                    append(entry.level.letter)
-                    append('/')
-                    append(entry.tag)
-                }
-                withStyle(SpanStyle(color = color)) {
-                    append(": ")
-                    append(entry.message)
-                }
-            },
-            fontFamily = FontFamily.Monospace,
-            fontSize = 10.sp,
-            lineHeight = 14.sp
-        )
+        Row(verticalAlignment = Alignment.Top) {
+            Text(
+                text = buildAnnotatedString {
+                    withStyle(SpanStyle(color = dim)) {
+                        append(entry.time)
+                        append(' ')
+                    }
+                    withStyle(SpanStyle(color = color, fontWeight = FontWeight.Bold)) {
+                        append(entry.level.letter)
+                        append('/')
+                        append(entry.tag)
+                    }
+                    withStyle(SpanStyle(color = color)) {
+                        append(": ")
+                        append(entry.message)
+                    }
+                },
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
+                modifier = Modifier.weight(1f)
+            )
+            IconButton(onClick = { copyEntry() }, modifier = Modifier.size(20.dp)) {
+                Icon(
+                    imageVector = TablerIcons.Copy,
+                    contentDescription = stringResource(R.string.logger_copy_entry),
+                    tint = dim,
+                    modifier = Modifier.size(12.dp)
+                )
+            }
+        }
         if (expanded && entry.stack != null) {
             Spacer(Modifier.height(3.dp))
             Text(

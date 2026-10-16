@@ -16,26 +16,21 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
-import android.os.Handler
-import android.os.Looper
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import androidx.core.content.ContextCompat
 import androidx.media.app.NotificationCompat.MediaStyle
 import androidx.media.session.MediaButtonReceiver
 import com.project.lol.R
 import com.project.lol.ui.OfflineActivity
 import com.project.lol.util.Logger
-import com.project.lol.webview.helpers.AccentTheme
 import com.project.lol.widget.WidgetSource
 import com.project.lol.widget.WidgetState
 import com.project.lol.widget.WidgetUpdater
-import androidx.core.graphics.toColorInt
+import com.project.lol.util.AppLocale
 import java.io.File
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.min
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -53,6 +48,7 @@ class OfflineMediaService : Service() {
         const val ACTION_NEXT = "com.project.lol.offline.ACTION_NEXT"
         const val ACTION_PREV = "com.project.lol.offline.ACTION_PREV"
         const val ACTION_STOP = "com.project.lol.offline.ACTION_STOP"
+        const val ACTION_SHUFFLE = "com.project.lol.offline.ACTION_SHUFFLE"
         const val ACTION_WIDGET_REFRESH = "com.project.lol.offline.ACTION_WIDGET_REFRESH"
 
         private val PLAYBACK_ACTIONS: Long =
@@ -62,8 +58,7 @@ class OfflineMediaService : Service() {
                 PlaybackStateCompat.ACTION_SKIP_TO_NEXT or
                 PlaybackStateCompat.ACTION_SKIP_TO_PREVIOUS or
                 PlaybackStateCompat.ACTION_STOP or
-                PlaybackStateCompat.ACTION_SEEK_TO or
-                PlaybackStateCompat.ACTION_PLAY_FROM_SEARCH
+                PlaybackStateCompat.ACTION_SEEK_TO
 
         private const val NOTIF_COLOR = 0xFF1DB954.toInt()
 
@@ -72,16 +67,18 @@ class OfflineMediaService : Service() {
     }
 
     interface OfflineController {
+        fun onPlayFromSearch(query: String?)
         fun onPlayPause()
         fun onNext()
         fun onPrev()
         fun onStop()
         fun onSeekTo(position: Long)
-        fun onPlayFromSearch(query: String)
+        fun onToggleShuffle()
     }
 
     private lateinit var mediaSession: MediaSessionCompat
     private var isPlaying = false
+    private var isShuffle = false
     private var coverBitmap: Bitmap? = null
     private var currentTitle = ""
     private var currentArtist = ""
@@ -89,8 +86,6 @@ class OfflineMediaService : Service() {
     private var currentPosition: Long = 0L
     private var currentDuration: Long = 0L
     private val widgetScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val mainHandler = Handler(Looper.getMainLooper())
-    private val coverLoadGeneration = AtomicLong(0L)
     private var lastWidgetPushAt = 0L
 
     private val actionReceiver = object : BroadcastReceiver() {
@@ -100,6 +95,7 @@ class OfflineMediaService : Service() {
                 ACTION_NEXT -> controller?.onNext()
                 ACTION_PREV -> controller?.onPrev()
                 ACTION_STOP -> controller?.onStop()
+                ACTION_SHUFFLE -> controller?.onToggleShuffle()
                 ACTION_WIDGET_REFRESH -> pushWidgetState(force = true)
             }
         }
@@ -162,8 +158,12 @@ class OfflineMediaService : Service() {
             currentDuration = intent.getLongExtra("duration", 0L)
             isPlaying = intent.getBooleanExtra("playing", false)
             currentPosition = intent.getLongExtra("position", 0L)
+            isShuffle = intent.getBooleanExtra("shuffle", isShuffle)
+            coverBitmap = null
             val coverPath = intent.getStringExtra("coverPath")
-            requestCover(coverPath?.takeIf { it.isNotBlank() }?.let(::File))
+            if (!coverPath.isNullOrBlank()) {
+                loadCoverArt(File(coverPath))
+            }
             updateMetadata()
             updatePlaybackState()
             showNotification()
@@ -185,8 +185,7 @@ class OfflineMediaService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        coverLoadGeneration.incrementAndGet()
-        if (instance === this) instance = null
+        instance = null
         try { unregisterReceiver(actionReceiver) } catch (_: Exception) {}
         try { unregisterReceiver(audioBecomingNoisyReceiver) } catch (_: Exception) {}
         if (::mediaSession.isInitialized) {
@@ -214,26 +213,17 @@ class OfflineMediaService : Service() {
 
     private fun setupMediaSession() {
         mediaSession = MediaSessionCompat(this, "SpotilolOfflineSession").apply {
-            setFlags(
-                MediaSessionCompat.FLAG_HANDLES_MEDIA_BUTTONS or
-                    MediaSessionCompat.FLAG_HANDLES_TRANSPORT_CONTROLS
-            )
             setCallback(object : MediaSessionCompat.Callback() {
+                override fun onPlayFromSearch(query: String?, extras: Bundle?) {
+                    OfflineMediaService.controller?.onPlayFromSearch(query)
+                }
+
                 override fun onPlay() {
                     if (!isPlaying) OfflineMediaService.controller?.onPlayPause()
                 }
 
                 override fun onPause() {
                     if (isPlaying) OfflineMediaService.controller?.onPlayPause()
-                }
-
-                override fun onPlayFromSearch(query: String?, extras: Bundle?) {
-                    val q = query?.trim().orEmpty()
-                    if (q.isNotEmpty()) {
-                        OfflineMediaService.controller?.onPlayFromSearch(q)
-                    } else if (!isPlaying) {
-                        OfflineMediaService.controller?.onPlayPause()
-                    }
                 }
 
                 override fun onSkipToNext() {
@@ -262,15 +252,15 @@ class OfflineMediaService : Service() {
             addAction(ACTION_NEXT)
             addAction(ACTION_PREV)
             addAction(ACTION_STOP)
+            addAction(ACTION_SHUFFLE)
             addAction(ACTION_WIDGET_REFRESH)
             addAction(Intent.ACTION_MEDIA_BUTTON)
         }
-        ContextCompat.registerReceiver(
-            this,
-            actionReceiver,
-            filter,
-            ContextCompat.RECEIVER_NOT_EXPORTED
-        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(actionReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(actionReceiver, filter)
+        }
 
         val noisyFilter = IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -285,7 +275,8 @@ class OfflineMediaService : Service() {
         currentArtist = artist
         currentAlbum = album
         currentDuration = duration
-        requestCover(coverFile)
+        coverBitmap = null
+        coverFile?.let { loadCoverArt(it) }
         updateMetadata()
         updatePlaybackState()
         showNotification()
@@ -300,15 +291,17 @@ class OfflineMediaService : Service() {
         pushWidgetState(force = true)
     }
 
+    fun updateShuffle(on: Boolean) {
+        if (isShuffle == on) return
+        isShuffle = on
+        showNotification()
+    }
+
     fun updatePosition(position: Long) {
         currentPosition = position
         updatePlaybackState()
         pushWidgetState()
     }
-
-    private fun widgetAccent(): Int = runCatching {
-        AccentTheme.resolveHex(this).toColorInt()
-    }.getOrDefault(NOTIF_COLOR)
 
     private fun pushWidgetState(force: Boolean = false) {
         val now = System.currentTimeMillis()
@@ -320,11 +313,10 @@ class OfflineMediaService : Service() {
             artist = currentArtist,
             playing = isPlaying,
             favorite = false,
-            shuffle = "disabled",
+            shuffle = if (isShuffle) "shuffle" else "off",
             repeat = "false",
             position = currentPosition,
             duration = currentDuration,
-            accent = widgetAccent(),
             source = WidgetState.SOURCE_OFFLINE,
             cover = coverBitmap
         )
@@ -381,42 +373,26 @@ class OfflineMediaService : Service() {
         }
     }
 
-    private fun requestCover(file: File?) {
-        val generation = coverLoadGeneration.incrementAndGet()
-        coverBitmap = null
-        if (file == null) return
-        loadCoverArt(file, generation)
-    }
-
-    private fun loadCoverArt(file: File, generation: Long) {
+    private fun loadCoverArt(file: File) {
         Thread {
             try {
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeFile(file.absolutePath, bounds)
-                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@Thread
                 val opts = BitmapFactory.Options().apply {
                     inSampleSize = maxOf(1, minOf(bounds.outWidth, bounds.outHeight) / 512)
                 }
                 val raw = BitmapFactory.decodeFile(file.absolutePath, opts) ?: return@Thread
                 val target = 512
                 val scale = min(target.toFloat() / raw.width, target.toFloat() / raw.height)
-                val w = (raw.width * scale).toInt().coerceAtLeast(1)
-                val h = (raw.height * scale).toInt().coerceAtLeast(1)
+                val w = (raw.width * scale).toInt()
+                val h = (raw.height * scale).toInt()
                 val scaled = Bitmap.createScaledBitmap(raw, w, h, true)
                 if (scaled != raw) raw.recycle()
-                mainHandler.post {
-                    if (instance !== this || coverLoadGeneration.get() != generation) {
-                        if (!scaled.isRecycled) scaled.recycle()
-                        return@post
-                    }
-                    coverBitmap = scaled
-                    updateMetadata()
-                    showNotification()
-                    pushWidgetState(force = true)
-                }
-            } catch (e: Exception) {
-                Logger.w(TAG, "Cover art load failed: ${e.message}")
-            }
+                coverBitmap = scaled
+                updateMetadata()
+                showNotification()
+                pushWidgetState(force = true)
+            } catch (_: Exception) {}
         }.start()
     }
 
@@ -463,6 +439,12 @@ class OfflineMediaService : Service() {
             R.drawable.ic_skip_next, getString(R.string.notif_action_next), getActionPendingIntent(ACTION_NEXT)
         ).build()
 
+        val shuffleAction = NotificationCompat.Action.Builder(
+            if (isShuffle) R.drawable.ic_shuffle_active else R.drawable.ic_shuffle,
+            getString(if (isShuffle) R.string.notif_shuffle_disable else R.string.notif_shuffle_enable),
+            getActionPendingIntent(ACTION_SHUFFLE)
+        ).build()
+
         val style = MediaStyle()
             .setShowActionsInCompactView(0, 1, 2)
             .setShowCancelButton(true)
@@ -486,6 +468,7 @@ class OfflineMediaService : Service() {
             .addAction(prevAction)
             .addAction(playPauseAction)
             .addAction(nextAction)
+            .addAction(shuffleAction)
 
         coverBitmap?.let { builder.setLargeIcon(it) }
 
@@ -498,5 +481,9 @@ class OfflineMediaService : Service() {
             this, action.hashCode(), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+    }
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocale.wrap(newBase))
     }
 }

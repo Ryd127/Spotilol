@@ -5,6 +5,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
@@ -16,6 +17,8 @@ import androidx.core.app.ServiceCompat
 import androidx.core.graphics.toColorInt
 import com.project.lol.R
 import com.project.lol.offline.DownloadManager
+import com.project.lol.ui.theme.ThemeController
+import com.project.lol.util.AppLocale
 import com.project.lol.util.Logger
 import java.io.File
 
@@ -72,17 +75,6 @@ class DownloadService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    // Android 15+ limits dataSync foreground services to 6 hours in a rolling 24-hour
-    // window. The framework gives only a short grace period here; stop cleanly instead of
-    // letting the process be killed with a RemoteServiceException.
-    override fun onTimeout(startId: Int, fgsType: Int) {
-        Logger.w("DownloadService", "foreground dataSync timeout; stopping downloads cleanly")
-        handler.removeCallbacks(pollRunnable)
-        runCatching { DownloadManager.cancelAll() }
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf(startId)
-    }
 
     override fun onDestroy() {
         handler.removeCallbacks(pollRunnable)
@@ -173,8 +165,7 @@ class DownloadService : Service() {
         }
 
         try {
-            builder.color = com.project.lol.webview.helpers.AccentTheme
-                .resolveHex(this).toColorIntOrNull() ?: 0xFF1DB954.toInt()
+            builder.color = ThemeController.accentHex(this).toColorIntOrNull() ?: 0xFF1DB954.toInt()
         } catch (_: Exception) {
             builder.color = 0xFF1DB954.toInt()
         }
@@ -187,6 +178,26 @@ class DownloadService : Service() {
             this, action.hashCode(), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
+    }
+
+    override fun onTimeout(fgsType: Int, startId: Int) {
+        Logger.w("DownloadService", "dataSync foreground service timed out (type=$fgsType startId=$startId)")
+        handleForegroundTimeout()
+    }
+
+    override fun onTimeout(fgsType: Int) {
+        Logger.w("DownloadService", "dataSync foreground service timed out (type=$fgsType)")
+        handleForegroundTimeout()
+    }
+
+    private fun handleForegroundTimeout() {
+        DownloadManager.cancelAll()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    override fun attachBaseContext(newBase: Context) {
+        super.attachBaseContext(AppLocale.wrap(newBase))
     }
 }
 

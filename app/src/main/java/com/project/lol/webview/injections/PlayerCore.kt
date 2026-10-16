@@ -4,6 +4,76 @@ object PlayerCore {
     const val CONTENT = """
             var reqPause=false,firstPlay=true,ulFlag=false,ffDone=false,npOpen=false;
             window.__splUnlocked=false;
+
+            // Hybrid5 trace: only a few markers per skip, Logger is gated by Settings.
+            (function(){
+                if(window.splTraceSkipStart) return;
+                var nextSeq=0, active=null, maxAge=15000;
+                var monotonic=function(){return (window.performance && performance.now)?performance.now():Date.now();};
+                var emit=function(step,detail){
+                    if(!active || Date.now()-active.epoch>maxAge) return;
+                    try {
+                        AndBridge.dbg('s','LAT/skip seq='+active.seq+' dir='+active.dir+
+                            ' src='+active.source+' stage='+step+
+                            ' dt='+Math.round(monotonic()-active.at)+'ms'+
+                            (detail?' '+detail:''));
+                    }catch(_){}
+                };
+                window.splTraceSkipStart=function(dir,source){
+                    active={seq:++nextSeq,dir:dir,source:source,at:monotonic(),
+                        epoch:Date.now(),oldTitle:String(window.track||''),
+                        changed:false,progress:false,reportedPlaying:false,mediaEvent:false};
+                    emit('COMMAND_RECEIVED','');
+                    var seq=active.seq;
+                    setTimeout(function(){
+                        if(active && active.seq===seq && !active.progress)
+                            emit('STILL_WAITING_6S','track_changed='+active.changed);
+                    },6000);
+                };
+                window.splTraceSkipStage=function(stage,detail){emit(stage,detail||'');};
+                window.splTraceSnapshot=function(title,position,isPlaying){
+                    if(!active || Date.now()-active.epoch>maxAge) return;
+                    var name=String(title||'');
+                    if(!active.changed && name && name!==active.oldTitle){
+                        active.changed=true;
+                        emit('TRACK_CHANGED','');
+                    }
+                    if(active.changed && !active.reportedPlaying && isPlaying===true){
+                        active.reportedPlaying=true;
+                        emit('WEB_PLAYING_TRUE','not_audio_proof');
+                    }
+                    if(active.changed && !active.progress && typeof position==='number' &&
+                       isFinite(position) && position>0){
+                        active.progress=true;
+                        emit('POSITION_MOVING','not_audio_proof');
+                    }
+                };
+                document.addEventListener('click',function(ev){
+                    try{
+                        var node=ev.target;
+                        var btn=node && node.closest ? node.closest('button[data-testid]') : null;
+                        if(!btn) return;
+                        var id=btn.getAttribute('data-testid')||'';
+                        var dir=id==='control-button-skip-forward'?'next':
+                                id==='control-button-skip-back'?'prev':null;
+                        if(!dir) return;
+                        if(ev.isTrusted) window.splTraceSkipStart(dir,'spotify_ui');
+                        else if(!active || active.dir!==dir || Date.now()-active.epoch>1000)
+                            window.splTraceSkipStart(dir,'synthetic');
+                        emit('DOM_CLICK_EVENT',ev.isTrusted?'trusted':'synthetic');
+                    }catch(_){}
+                },true);
+                document.addEventListener('playing',function(ev){
+                    try{
+                        if(!active || active.mediaEvent) return;
+                        var tag=ev.target && ev.target.tagName;
+                        if(tag==='AUDIO' || tag==='VIDEO'){
+                            active.mediaEvent=true;
+                            emit('HTML_MEDIA_PLAYING', 'not_audible_proof');
+                        }
+                    }catch(_){}
+                },true);
+            })();
             window.__splApActive=false;
             window.__splApDone=false;
             var featVer='web-player_'+new Date().toISOString().split('T')[0]+'_'+Date.now()+'_'+Math.floor(Math.random()*0xFFFFFFF).toString(16).padStart(7,'0');
@@ -129,7 +199,10 @@ object PlayerCore {
                 if(s!==null) window.__splLastPlaying=s;
                 return window.__splLastPlaying===true;
             };
-
-        
+            window.splQ=function(sel){
+                var c=(window.__splQc||(window.__splQc={}))[sel];
+                if(!c||!c.isConnected){ c=document.querySelector(sel); window.__splQc[sel]=c; }
+                return c;
+            };
     """
 }

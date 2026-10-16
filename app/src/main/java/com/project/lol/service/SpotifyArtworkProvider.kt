@@ -26,7 +26,7 @@ import java.security.MessageDigest
 class SpotifyArtworkProvider : ContentProvider() {
 
     companion object {
-        const val AUTHORITY = "com.spotify.mobile.android.mediaapi"
+        const val AUTHORITY = com.project.lol.BuildConfig.APPLICATION_ID + ".artwork"
 
         private const val CACHE_DIR = "spotify_media_art"
         private const val MAX_CACHED_ARTWORK = 12

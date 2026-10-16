@@ -7,6 +7,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.View
 import android.webkit.ConsoleMessage
+import android.webkit.CookieManager
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -20,17 +21,11 @@ import com.project.lol.webview.injections.GoogleSpoof
 import androidx.core.net.toUri
 
 class SpotifyWebChromeClient(
-    onProgressChanged: ((Int) -> Unit)? = null,
-    onShowCustomView: ((View?, CustomViewCallback?) -> Unit)? = null,
-    onHideCustomView: (() -> Unit)? = null,
-    onFileChooser: ((ValueCallback<Array<Uri>>, Array<String>) -> Boolean)? = null
+    private val onProgressChanged: ((Int) -> Unit)? = null,
+    private val onShowCustomView: ((View?, CustomViewCallback?) -> Unit)? = null,
+    private val onHideCustomView: (() -> Unit)? = null,
+    private val onFileChooser: ((ValueCallback<Array<Uri>>, Array<String>) -> Boolean)? = null
 ) : WebChromeClient() {
-
-    private var progressChangedCallback = onProgressChanged
-    private var showCustomViewCallback = onShowCustomView
-    private var hideCustomViewCallback = onHideCustomView
-    private var fileChooserCallback = onFileChooser
-
 
     private var childWebView: WebView? = null
 
@@ -42,12 +37,12 @@ class SpotifyWebChromeClient(
 
     override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
         Logger.i(TAG, "custom view shown: ${view?.javaClass?.simpleName ?: "null"}")
-        showCustomViewCallback?.invoke(view, callback)
+        onShowCustomView?.invoke(view, callback)
     }
 
     override fun onHideCustomView() {
         Logger.i(TAG, "custom view hidden")
-        hideCustomViewCallback?.invoke()
+        onHideCustomView?.invoke()
     }
 
     override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
@@ -64,14 +59,26 @@ class SpotifyWebChromeClient(
         return true
     }
 
-    private fun isSpotifyUrl(url: String): Boolean =
-        TrustedOrigins.isSpotifyWebUrl(url)
+    private fun isSpotifyUrl(url: String): Boolean {
+        return url.startsWith("https://open.spotify.com/") ||
+                url.startsWith("https://accounts.spotify.com/")
+    }
 
-    private fun isOAuthUrl(url: String): Boolean =
-        TrustedOrigins.isOAuthOrigin(url)
+    private fun isOAuthUrl(url: String): Boolean {
+        val host = runCatching { url.toUri().host?.lowercase() }.getOrNull() ?: return false
+        return host == "google.com" ||
+                host.endsWith(".google.com") ||
+                host.indexOf(".google.") != -1 ||
+                host == "facebook.com" ||
+                host.endsWith(".facebook.com") ||
+                host == "appleid.apple.com" ||
+                host.endsWith(".apple.com")
+    }
 
-    private fun isGoogleUrl(url: String): Boolean =
-        TrustedOrigins.isGoogleOrigin(url)
+    private fun isGoogleUrl(url: String): Boolean {
+        val host = runCatching { url.toUri().host?.lowercase() }.getOrNull() ?: return false
+        return host == "google.com" || host.endsWith(".google.com") || host.indexOf(".google.") != -1
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreateWindow(
@@ -88,6 +95,7 @@ class SpotifyWebChromeClient(
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.userAgentString = DESKTOP_UA
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
             webViewClient = object : WebViewClient() {
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
@@ -139,7 +147,7 @@ class SpotifyWebChromeClient(
         if (filePathCallback == null) return false
         val acceptTypes = fileChooserParams?.acceptTypes ?: emptyArray()
         Logger.i(TAG, "file chooser: ${acceptTypes.joinToString(",")}")
-        return fileChooserCallback?.invoke(filePathCallback, acceptTypes) ?: false
+        return onFileChooser?.invoke(filePathCallback, acceptTypes) ?: false
     }
 
     @Suppress("DEPRECATION")
@@ -147,19 +155,14 @@ class SpotifyWebChromeClient(
         permissionRequest ?: return
         Handler(Looper.getMainLooper()).post {
             val resources = permissionRequest.resources
-            val origin = permissionRequest.origin?.toString()
+            val origin = permissionRequest.origin.toString()
             Logger.d(TAG, "permission request: $origin ${resources.joinToString(",")}")
-            if (!TrustedOrigins.isBridgeOrigin(origin)) {
-                permissionRequest.deny()
-                Logger.w(TAG, "permission denied for untrusted origin: $origin")
-                return@post
-            }
             if (resources.contains(PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID)) {
                 permissionRequest.grant(resources)
                 Logger.i(TAG, "protected media granted")
             } else {
                 permissionRequest.deny()
-                Logger.w(TAG, "permission denied: ${resources.joinToString(",")}")
+                Logger.w(TAG, "permission denied: $origin ${resources.joinToString(",")}")
             }
         }
     }
@@ -169,38 +172,14 @@ class SpotifyWebChromeClient(
         if (newProgress == 100 || newProgress == 25 || newProgress == 50 || newProgress == 75) {
             Logger.d(TAG, "load progress ${newProgress}%")
         }
-        progressChangedCallback?.invoke(newProgress)
-    }
-
-    fun rebindUiCallbacks(
-        onProgressChanged: ((Int) -> Unit)? = null,
-        onShowCustomView: ((View?, CustomViewCallback?) -> Unit)? = null,
-        onHideCustomView: (() -> Unit)? = null,
-        onFileChooser: ((ValueCallback<Array<Uri>>, Array<String>) -> Boolean)? = null
-    ) {
-        progressChangedCallback = onProgressChanged
-        showCustomViewCallback = onShowCustomView
-        hideCustomViewCallback = onHideCustomView
-        fileChooserCallback = onFileChooser
-    }
-
-    fun clearUiCallbacks() {
-        progressChangedCallback = null
-        showCustomViewCallback = null
-        hideCustomViewCallback = null
-        fileChooserCallback = null
-    }
-
-    fun cleanupChildWindow() {
-        childWebView?.let {
-            try { it.destroy() } catch (_: Exception) {}
-        }
-        childWebView = null
+        onProgressChanged?.invoke(newProgress)
     }
 
     fun cleanup() {
         Logger.d(TAG, "chrome client cleanup")
-        cleanupChildWindow()
-        clearUiCallbacks()
+        childWebView?.let {
+            try { it.destroy() } catch (_: Exception) {}
+        }
+        childWebView = null
     }
 }

@@ -12,16 +12,6 @@ import java.io.FileOutputStream
 object WidgetUpdater {
 
     suspend fun push(context: Context, state: WidgetState) {
-        // The explicit OfflineMode preference is the ownership boundary between Spotilol's two
-        // playback engines. A service that is finishing asynchronously must not overwrite the
-        // widgets/source after the user has already switched to the other engine.
-        val offlineMode = context.getSharedPreferences("spotilol_prefs", Context.MODE_PRIVATE)
-            .getBoolean("OfflineMode", false)
-        when (state.source) {
-            WidgetState.SOURCE_WEB -> if (offlineMode) return
-            WidgetState.SOURCE_OFFLINE -> if (!offlineMode) return
-        }
-
         WidgetSource.set(context, state.source)
         val version = if (state.cover != null) System.currentTimeMillis() else 0L
         state.cover?.let { writeCover(context, it) }

@@ -3,7 +3,7 @@ name: Build Spotilol APK
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master, 'feature/upstream-1.2.0-integration', 'feature/native-ui-redesign' ]
+    branches: [ main, master, 'feature/upstream-1.2.0-integration', 'feature/native-ui-redesign', 'feature/upstream-1.2.4-native' ]
     tags: [ 'v*' ]
   pull_request:
 
@@ -27,117 +27,9 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v7
 
-      - name: Checkout pinned upstream Spotilol 1.2.0
-        uses: actions/checkout@v7
-        with:
-          repository: lyssadev/Spotilol
-          ref: a62e55dee71ecf558136d52958d89fac5ed6599b
-          path: pinned-upstream-120
-          persist-credentials: false
-
-      - name: Apply Vivo hybrid compatibility overlay
+      - name: Verify integrated source and embedded JavaScript
         shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$(git -C pinned-upstream-120 rev-parse HEAD)" == "a62e55dee71ecf558136d52958d89fac5ed6599b" ]]
-          mkdir -p ci-logs
-          echo '8f688b1bdaaf0f50a49d809f24ff74559d503dd0606b714622c897b79669a211  ci/hybrid/spotilol-1.2.0-vivo-hybrid1.patch.br' | sha256sum --status -c -
-          cp app/src/main/java/com/project/lol/service/SpotifyArtworkProvider.kt "$RUNNER_TEMP/SpotifyArtworkProvider.kt"
-          cp app/proguard-rules.pro "$RUNNER_TEMP/stable-proguard-rules.pro"
-          cp gradle/wrapper/gradle-wrapper.properties "$RUNNER_TEMP/gradle-wrapper.properties"
-          mv pinned-upstream-120 "$RUNNER_TEMP/spotilol-upstream-120"
-          rsync -a --delete \
-            --exclude='.git/' --exclude='.github/' --exclude='ci/' \
-            --exclude='ci-logs/' --exclude='scripts/' \
-            --exclude='app/src/test/' \
-            --exclude='app/src/main/cpp/' \
-            --exclude='lame/CMakeLists.txt' --exclude='opus/CMakeLists.txt' \
-            --exclude='app/src/main/java/com/project/lol/webview/TrustedOrigins.kt' \
-            "$RUNNER_TEMP/spotilol-upstream-120/" ./
-          cp "$RUNNER_TEMP/gradle-wrapper.properties" gradle/wrapper/gradle-wrapper.properties
-          mkdir -p app/src/main/java/com/project/lol/service
-          cp "$RUNNER_TEMP/SpotifyArtworkProvider.kt" app/src/main/java/com/project/lol/service/
-          cat "$RUNNER_TEMP/stable-proguard-rules.pro" >> app/proguard-rules.pro
-          python3 - <<'PY'
-          import subprocess
-          checks={
-            'app/build.gradle.kts':'a34feb54790191b6c7aea80ce79cd5acfdcacd9b',
-            'app/src/main/java/com/project/lol/service/MediaNotificationService.kt':'21ce0a0524cbae63fe8937f4e308ac6fdea2b17e',
-            'app/src/main/java/com/project/lol/bridge/OriginScopedBridge.kt':'3afc871a426e9f29117147d6fb640df0a35c3bb1'
-          }
-          for path,expected in checks.items():
-            actual=subprocess.check_output(['git','hash-object',path],text=True).strip()
-            assert actual==expected,(path,actual,expected)
-          PY
-          node -e 'const fs=require("fs"),z=require("zlib");fs.writeFileSync("/tmp/spotilol-hybrid1.patch",z.brotliDecompressSync(fs.readFileSync("ci/hybrid/spotilol-1.2.0-vivo-hybrid1.patch.br")))'
-          git apply --check /tmp/spotilol-hybrid1.patch
-          git apply /tmp/spotilol-hybrid1.patch
-          # The public upstream archive does not contain credentials for Firebase Gradle tasks.
-          python3 - <<'PY'
-          from pathlib import Path
-          gradle=Path('app/build.gradle.kts')
-          data=gradle.read_text()
-          for entry in ['    id("com.google.gms.google-services")\n', '    id("com.google.firebase.crashlytics")\n']:
-            assert data.count(entry)==1,entry
-            data=data.replace(entry,'',1)
-          native_configuration = '''    externalNativeBuild {
-                  cmake {
-                      path = file("src/main/cpp/CMakeLists.txt")
-                      version = "3.22.1"
-                  }
-              }
-              packaging {
-                  jniLibs {
-                      pickFirsts += setOf(
-                          "**/libandroidx.graphics.path.so",
-                          "**/libdatastore_shared_counter.so"
-                      )
-                  }
-              }
-          '''
-          assert data.count('    buildFeatures {') == 1
-          data = data.replace('    buildFeatures {', native_configuration + '    buildFeatures {', 1)
-          assert data.count('    implementation(libs.androidx.core.ktx)') == 1
-          data = data.replace(
-              '    implementation(libs.androidx.core.ktx)',
-              '    implementation(libs.androidx.datastore)\n'
-              '    testImplementation("junit:junit:4.13.2")\n'
-              '    implementation(libs.androidx.core.ktx)', 1)
-          gradle.write_text(data)
-          catalog = Path('gradle/libs.versions.toml')
-          vc = catalog.read_text()
-          assert vc.count('glance = "1.2.0"') == 1
-          assert vc.count('[libraries]') == 1
-          assert vc.count('composeBom = "2026.06.01"') == 1
-          vc = vc.replace('composeBom = "2026.06.01"', 'composeBom = "2026.09.00"', 1)
-          vc = vc.replace('glance = "1.2.0"', 'glance = "1.2.0"\ndatastore = "1.2.1"', 1)
-          vc = vc.replace(
-              '[libraries]',
-              '[libraries]\nandroidx-datastore = { group = "androidx.datastore", name = "datastore", version.ref = "datastore" }', 1)
-          catalog.write_text(vc)
-          assert Path('app/src/main/cpp/CMakeLists.txt').is_file()
-          assert 'max-page-size=16384' in Path('lame/CMakeLists.txt').read_text()
-          assert 'max-page-size=16384' in Path('opus/CMakeLists.txt').read_text()
-          media=Path('app/src/main/java/com/project/lol/service/MediaNotificationService.kt').read_text()
-          assert media.count('fun updateFromMediaStatus(json: String)')==1
-          assert 'com.spotify.music.extra.ART_HTTPS_URI' in media
-          assert 'lastMetadataKey' in media
-          assert 'currentArtUri: Uri?' in media
-          print('Integrated upstream 1.2.0 + Vivo/artwork/performance patch')
-          PY
-          # Firebase is optional for the Vivo test package ID.
-          python3 ci/hybrid/guard_optional_firebase.py
-          python3 ci/hybrid/apply_playback_stability.py
-          python3 ci/hybrid/optimize_ui_sync.py
-          python3 ci/hybrid/throttle_progress_bridge.py
-          python3 ci/hybrid/animate_ui_motion.py
-          python3 ci/hybrid/apply_native_mini.py
-          python3 ci/hybrid/apply_native_mobile.py
-          python3 ci/hybrid/polish_native_mobile.py
-          python3 ci/hybrid/guard_native_session.py
-          python3 ci/hybrid/redesign_native_ui.py
-          python3 ci/hybrid/recover_native_activation.py
-          python3 ci/hybrid/check_native_js_syntax.py
+        run: node ci/verify-android.cjs
 
       - name: Verify Gradle wrapper integrity
         shell: bash
@@ -380,7 +272,7 @@ jobs:
               target_sdk="$(apkanalyzer manifest target-sdk "$apk" | tr -d '\r\n')"
               debuggable="$(apkanalyzer manifest debuggable "$apk" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
               echo "APK identity: id=${app_id} version=${version_name}(${version_code}) minSdk=${min_sdk} targetSdk=${target_sdk} debuggable=${debuggable}"
-              [[ "$app_id" == "com.spotify.music" ]]
+              [[ "$app_id" == "com.project.lol" ]]
               [[ "$version_name" == "$expected_version_name" ]]
               [[ "$version_code" == "$expected_version_code" ]]
               [[ "$min_sdk" == "28" ]]
