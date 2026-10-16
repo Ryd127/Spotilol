@@ -7,7 +7,6 @@ import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import com.project.lol.bridge.OriginScopedBridge
-import androidx.webkit.WebSettingsCompat
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 import com.project.lol.bridge.SpotifyBridge
@@ -82,9 +81,8 @@ object WebViewHost {
         }
         view.setInitialScale(100)
         view.setBackgroundColor(0xFF000000.toInt())
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.BACK_FORWARD_CACHE)) {
-            WebSettingsCompat.setBackForwardCacheEnabled(view.settings, true)
-        }
+        // Keep normal HTTP caching; do not opt the authenticated player into
+        // experimental document restoration with unverified bridge/session state.
         OriginScopedBridge.install(view, bridgeRef)
         view.webChromeClient = SpotifyWebChromeClient(
             onProgressChanged = { progress -> uiHost?.onProgress(progress) },

@@ -69,6 +69,7 @@ const manifest=fs.readFileSync(path.join(root,'app/src/main/AndroidManifest.xml'
 assert(manifest.includes('android:authorities="${applicationId}.artwork"')&&!manifest.includes('com.spotify.mobile.android.mediaapi'));
 const host=fs.readFileSync(path.join(source,'webview/WebViewHost.kt'),'utf8');
 assert(host.includes('OriginScopedBridge.install(view, bridgeRef)')&&!host.includes('addJavascriptInterface(bridgeRef'));
+assert(!host.includes('setBackForwardCacheEnabled'),'Do not force experimental restoration of the authenticated player');
 const controls=payload('webview/injections/PlaybackControls.kt');
 assert(!controls.includes('window.splPauseRetry=function'),'Restored blind legacy pause retry');
 const activity=fs.readFileSync(path.join(source,'ui/MainActivity.kt'),'utf8');

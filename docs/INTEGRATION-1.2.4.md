@@ -33,6 +33,9 @@ The historical Vivo experiment used com.spotify.music and a Spotify-shaped provi
 - Replace the previous fixed R avatar initial with a generic profile icon.
 - Accept the same Spotify artwork CDNs in the native mini-player and browsing interface.
 - Keep the four new timer/battery analytics events safe when optional Firebase is absent.
+- Register internal playback broadcasts with an explicit non-exported policy on every supported Android version.
+- Keep standard HTTP caching without forcing the experimental WebView back/forward document cache.
+- Use configuration-aware resources for device-info, theme-import and log-copy feedback in settings.
 
 ## Checks and boundaries
 
