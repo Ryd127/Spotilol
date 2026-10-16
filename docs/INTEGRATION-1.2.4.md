@@ -31,12 +31,16 @@ The historical Vivo experiment used com.spotify.music and a Spotify-shaped provi
 - Connect current-track favorite, shuffle and repeat controls to their existing transport commands instead of opening the web fallback.
 - Normalize localized Spotify paths and recognize anonymous cards with repeated overlay/title links without borrowing artwork from adjacent cards.
 - Replace the previous fixed R avatar initial with a generic profile icon.
+- Accept the same Spotify artwork CDNs in the native mini-player and browsing interface.
+- Keep the four new timer/battery analytics events safe when optional Firebase is absent.
 
 ## Checks and boundaries
 
 ci/verify-android.cjs validates embedded JavaScript syntax and exercises metadata pacing, seeks, restart, artwork updates, native play/navigation separation, bridge setup and installation identity.
 
 The existing CI keeps unit tests, lint, debug/release compilation, production certificate verification, APK identity checks, zipalign and 16 KiB ELF checks. Build and artifact results must be recorded after the run completes, not inferred from source checks.
+
+WebSecurityPolicyTest exercises the actual origin-scoped bridge policy, including the new UI commands, login-only access, frame restrictions, URL authority tricks and cookie-attribute injection. The first integration run correctly stopped on four nullable analytics calls before producing an APK; those calls are now guarded and covered by the source regression check.
 
 No phone is connected to the local Android debugging bridge. UI fidelity, the previously reported audio click, Bluetooth/background behavior and Vivo-specific presentation require actual device verification. The screenshots captioned Home and Library in the handoff have opposite screens on their right sides; compare the screen content and selected bottom tab rather than the captions alone.
 

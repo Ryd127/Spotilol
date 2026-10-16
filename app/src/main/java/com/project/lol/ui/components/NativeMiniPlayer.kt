@@ -63,7 +63,8 @@ private object MiniArtwork {
         if (url.isEmpty() || url.length > 800) return@withContext null
         val uri = runCatching { URL(url) }.getOrNull() ?: return@withContext null
         val host = uri.host.lowercase(java.util.Locale.ROOT)
-        if (uri.protocol != "https" || !(host == "scdn.co" || host.endsWith(".scdn.co")))
+        if (uri.protocol != "https" || !(host == "scdn.co" || host.endsWith(".scdn.co") ||
+                host == "spotifycdn.com" || host.endsWith(".spotifycdn.com")))
             return@withContext null
         cache.get(url)?.let { return@withContext it }
         var connection: HttpURLConnection? = null

@@ -526,10 +526,6 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
                                     publishVolumeIcon(syncVolumeState())
                                 }
 
-                            bridge.onMediaPosition = { position ->
-                                SleepTimerManager.onPosition(position)
-                            }
-
                             DisposableEffect(bridge) {
                                 var styledActive: Boolean? = null
                                 val releaseHost = SleepTimerManager.registerHost(
