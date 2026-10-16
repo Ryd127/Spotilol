@@ -73,4 +73,8 @@ const controls=payload('webview/injections/PlaybackControls.kt');
 assert(!controls.includes('window.splPauseRetry=function'),'Restored blind legacy pause retry');
 const activity=fs.readFileSync(path.join(source,'ui/MainActivity.kt'),'utf8');
 assert(!/\banalytics\.logEvent\(/.test(activity),'Optional Firebase analytics must remain nullable-safe');
+for(const file of ['service/MediaNotificationService.kt','service/OfflineMediaService.kt']) {
+ const service=fs.readFileSync(path.join(source,file),'utf8');
+ assert(!/\bregisterReceiver\(actionReceiver,\s*filter\)/.test(service),file+': internal actions need an explicit receiver export policy');
+}
 console.log('PASS: '+checked+' embedded scripts; metadata pacing/seek/restart/artwork; native play/navigation; independent package/provider; guarded bridge and transport.');
