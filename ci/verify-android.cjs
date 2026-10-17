@@ -64,7 +64,7 @@ assert.equal(probe.qaCards.fromAnchor(overlay).title,'My playlist','Overlay lost
 assert.equal(probe.qaCards.fromAnchor(other.children[0]).image,'https://i.scdn.co/image/wrong','Neighbouring cover mixed');
 assert.equal(probe.qaCards.allowedPath('/intl-es-419/playlist/Good'),'/playlist/Good');
 const gradle=fs.readFileSync(path.join(root,'app/build.gradle.kts'),'utf8');
-assert(gradle.includes('applicationId = "com.project.lol"')&&gradle.includes('versionCode = 45'));
+assert(gradle.includes('applicationId = "com.project.lol"')&&gradle.includes('versionCode = 46'));
 const manifest=fs.readFileSync(path.join(root,'app/src/main/AndroidManifest.xml'),'utf8');
 assert(manifest.includes('android:authorities="${applicationId}.artwork"')&&!manifest.includes('com.spotify.mobile.android.mediaapi'));
 const host=fs.readFileSync(path.join(source,'webview/WebViewHost.kt'),'utf8');
@@ -78,4 +78,11 @@ for(const file of ['service/MediaNotificationService.kt','service/OfflineMediaSe
  const service=fs.readFileSync(path.join(source,file),'utf8');
  assert(!/\bregisterReceiver\(actionReceiver,\s*filter\)/.test(service),file+': internal actions need an explicit receiver export policy');
 }
+const chrome=fs.readFileSync(path.join(source,'ui/components/NativePlayerChrome.kt'),'utf8');
+const shell=fs.readFileSync(path.join(source,'ui/components/NativeMobileShell.kt'),'utf8');
+assert(chrome.includes('onDragCancel = { finishDrag(0f, cancelled = true) }'));
+assert(chrome.includes('translationY = currentFraction() * size.height'),'Player drag must move a layer');
+assert(!/evaluateJavascript|AndBridge|setInterval/.test(chrome),'Visual motion must not control the audio engine');
+assert(shell.includes('PlayerSheetPolicy.miniHeightDp')&&shell.includes('.progressSemantics(progress(track))'));
+assert(!shell.includes('if (swipe > 95f)'),'Legacy non-interactive swipe restored');
 console.log('PASS: '+checked+' embedded scripts; metadata pacing/seek/restart/artwork; native play/navigation; independent package/provider; guarded bridge and transport.');

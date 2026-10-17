@@ -4,19 +4,18 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.progressSemantics
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -41,16 +40,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.key
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -60,11 +60,14 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -262,7 +265,9 @@ private fun ToolIcon(
     size: Int = 25,
     modifier: Modifier = Modifier
 ) {
-    IconButton(onClick = onClick, modifier = modifier.size(45.dp)) {
+    val interactions = remember { MutableInteractionSource() }
+    IconButton(onClick = onClick, interactionSource = interactions,
+        modifier = modifier.size(48.dp).nativePressScale(interactions)) {
         Icon(icon, contentDescription = title, tint = color, modifier = Modifier.size(size.dp))
     }
 }
@@ -276,21 +281,68 @@ private fun Avatar(onClick: () -> Unit) {
 }
 @Composable
 private fun Pill(label: String, checked: Boolean, onClick: () -> Unit) {
+    val interactions = remember { MutableInteractionSource() }
     val fill by animateColorAsState(
         targetValue = if (checked) green else Color(0xFF282828),
-        animationSpec = tween(160), label = "chipFill"
+        animationSpec = tween(200, easing = NativeChromeMotion.SurfaceEasing), label = "chipFill"
     )
     val ink by animateColorAsState(
         targetValue = if (checked) Color.Black else white,
-        animationSpec = tween(160), label = "chipText"
+        animationSpec = tween(200, easing = NativeChromeMotion.SurfaceEasing), label = "chipText"
     )
-    Box(Modifier.clip(CircleShape).background(fill)
-        .clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 11.dp)) {
+    Box(Modifier.nativePressScale(interactions).clip(CircleShape).background(fill)
+        .clickable(interactionSource = interactions, indication = null, role = Role.Button, onClick = onClick)
+        .padding(horizontal = 16.dp, vertical = 11.dp)) {
         Text(label, color = ink, fontSize = 13.sp, maxLines = 1)
     }
 }
 private fun progress(track: NativeMiniTrack): Float =
     if (track.duration > 0) (track.position.toFloat() / track.duration.toFloat()).coerceIn(0f, 1f) else 0f
+
+@Composable
+private fun NativeTransportBar(
+    track: NativeMiniTrack, tone: Color, onOpen: () -> Unit,
+    onFavorite: () -> Unit, onToggle: () -> Unit, onNext: () -> Unit
+) {
+    val height = PlayerSheetPolicy.miniHeightDp(LocalDensity.current.fontScale).dp
+    Box(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) {
+        Box(Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(8.dp)).background(tone)
+            .testTag("native-transport-bar")) {
+            Row(Modifier.fillMaxSize().clickable(role = Role.Button, onClick = onOpen)
+                .padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Cover(track.cover, Modifier.size(40.dp).clip(RoundedCornerShape(4.dp)))
+                Column(Modifier.weight(1f).padding(start = 12.dp, end = 4.dp)) {
+                    Crossfade(track.title, animationSpec = tween(170), label = "miniTrackTitle") { title ->
+                        Text(title, color = white, fontFamily = FontFamily.SansSerif,
+                            fontSize = 13.sp, lineHeight = 16.sp, fontWeight = FontWeight.Bold,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    Text(track.artist, color = white.copy(alpha = .70f), fontFamily = FontFamily.SansSerif,
+                        fontSize = 13.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                ToolIcon(TablerIcons.Heart, "Нравится", onFavorite, if(track.favorite) green else white, 23)
+                ToolIcon(if(track.playing) TablerIcons.PlayerPause else TablerIcons.PlayerPlay,
+                    "Пауза или воспроизведение", onToggle, white, 26)
+                ToolIcon(TablerIcons.PlayerSkipForward, "Следующий трек", onNext, white, 26)
+            }
+            // Track identity creates a fresh visual anchor; a seek never sweeps through the song.
+            key(track.title, track.artist, track.duration) {
+                val previous = remember { longArrayOf(track.position) }
+                val millis = remember(track.position, track.playing) {
+                    PlayerSheetPolicy.progressAnimationMillis(previous[0], track.position, track.playing)
+                }
+                SideEffect { previous[0] = track.position }
+                val fraction = animateFloatAsState(progress(track), tween(millis, easing = LinearEasing),
+                    label = "miniProgress")
+                Canvas(Modifier.align(Alignment.BottomCenter).padding(horizontal = 8.dp)
+                    .fillMaxWidth().height(2.dp).progressSemantics(progress(track))) {
+                    drawRect(white.copy(alpha = .17f))
+                    drawRect(white.copy(alpha = .92f), size = Size(size.width * fraction.value.coerceIn(0f, 1f), size.height))
+                }
+            }
+        }
+    }
+}
 private fun clock(ms: Long): String {
     val secs = (ms.coerceAtLeast(0) / 1000).toInt()
     return (secs / 60).toString() + ":" + (secs % 60).toString().padStart(2, '0')
@@ -649,29 +701,7 @@ fun NativeMobileShell(
             }
 
             if (track.title.isNotBlank()) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(tone.copy(alpha = .70f))
-                    .height(66.dp).padding(start = 7.dp, end = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically) {
-                    Cover(track.cover, Modifier.size(51.dp))
-                    Column(Modifier.weight(1f).clickable { nowPlaying = true }
-                        .padding(start = 10.dp)) {
-                        Crossfade(track.title, animationSpec = tween(170), label = "miniTrackTitle") { title ->
-                            Text(title, color = white, fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        Text(track.artist, color = white.copy(alpha = .70f), fontSize = 11.sp,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    ToolIcon(TablerIcons.Heart, "Нравится", onFavorite, if(track.favorite) green else white, 23)
-                    ToolIcon(if (track.playing) TablerIcons.PlayerPause else TablerIcons.PlayerPlay,
-                        "Пауза или воспроизведение", onToggle, white, 26)
-                    ToolIcon(TablerIcons.PlayerSkipForward, "Следующий трек", onNext, white, 26)
-                }
-                LinearProgressIndicator(progress = { progress(track) },
-                    modifier = Modifier.padding(horizontal = 12.dp).fillMaxWidth().height(2.dp),
-                    color = white.copy(alpha = .92f), trackColor = white.copy(alpha = .17f))
+                NativeTransportBar(track, tone, { nowPlaying = true }, onFavorite, onToggle, onNext)
             }
             Row(Modifier.fillMaxWidth().height(62.dp).background(Color(0xFF101010)),
                 horizontalArrangement = Arrangement.SpaceEvenly,
@@ -700,23 +730,14 @@ fun NativeMobileShell(
             }
         }
 
-        AnimatedVisibility(visible = nowPlaying,
-            enter = slideInVertically(tween(260)) { it } + fadeIn(tween(160)),
-            exit = slideOutVertically(tween(220)) { it } + fadeOut(tween(180)),
-            modifier = Modifier.fillMaxSize()) {
-            var swipe by remember { mutableStateOf(0f) }
+        NativePlayerSheet(visible = nowPlaying, onDismiss = { nowPlaying = false }) { closePlayer, dragHandle ->
             Box(Modifier.fillMaxSize().background(
                 Brush.verticalGradient(listOf(tone, tone.copy(alpha = .5f), Color(0xFF171018)))
-            ).pointerInput(Unit) {
-                detectVerticalDragGestures(onDragEnd = {
-                    if (swipe > 95f) nowPlaying = false
-                    swipe = 0f
-                }, onVerticalDrag = { change, dy -> swipe += dy; change.consume() })
-            }) {
+            )) {
                 Column(Modifier.fillMaxSize().padding(horizontal = 24.dp)) {
-                    Row(Modifier.fillMaxWidth().height(60.dp),
+                    Row(Modifier.fillMaxWidth().height(60.dp).then(dragHandle),
                         verticalAlignment = Alignment.CenterVertically) {
-                        ToolIcon(TablerIcons.ChevronDown, "Закрыть", { nowPlaying = false }, white, 28)
+                        ToolIcon(TablerIcons.ChevronDown, "Закрыть", closePlayer, white, 28)
                         Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("СЕЙЧАС ИГРАЕТ", color = white.copy(alpha = .8f),
                                 fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
@@ -727,7 +748,7 @@ fun NativeMobileShell(
                         ToolIcon(TablerIcons.DotsVertical, "Меню", onOpenWeb, white)
                     }
                     Spacer(Modifier.weight(.3f))
-                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    BoxWithConstraints(Modifier.fillMaxWidth().then(dragHandle)) {
                         val side = maxWidth.coerceAtMost(365.dp)
                         Cover(track.cover, Modifier.size(side).align(Alignment.Center))
                     }
@@ -735,11 +756,11 @@ fun NativeMobileShell(
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Crossfade(track.title, animationSpec = tween(190), label = "nowPlayingTitle") { name ->
-                                Text(name, color = white, fontSize = 22.sp,
+                                Text(name, color = white, fontFamily = FontFamily.SansSerif, fontSize = 22.sp,
                                     fontWeight = FontWeight.Bold, maxLines = 2,
                                     overflow = TextOverflow.Ellipsis)
                             }
-                            Text(track.artist, color = white.copy(alpha = .72f), fontSize = 15.sp,
+                            Text(track.artist, color = white.copy(alpha = .72f), fontFamily = FontFamily.SansSerif, fontSize = 15.sp,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                         ToolIcon(TablerIcons.Heart, "Добавить в медиатеку", onFavorite, if(track.favorite) green else white, 27)
@@ -764,8 +785,10 @@ fun NativeMobileShell(
                         verticalAlignment = Alignment.CenterVertically) {
                         ToolIcon(TablerIcons.ArrowsSort, "Перемешать", onShuffle, if(track.shuffle) green else white, 26)
                         ToolIcon(TablerIcons.PlayerSkipBack, "Предыдущий", onPrevious, white, 32)
-                        Box(Modifier.size(68.dp).clip(CircleShape).background(white)
-                            .clickable(onClick = onToggle), contentAlignment = Alignment.Center) {
+                        val playInteractions = remember { MutableInteractionSource() }
+                        Box(Modifier.size(68.dp).nativePressScale(playInteractions).clip(CircleShape).background(white)
+                            .clickable(interactionSource = playInteractions, indication = null,
+                                role = Role.Button, onClick = onToggle), contentAlignment = Alignment.Center) {
                             Icon(if(track.playing) TablerIcons.PlayerPause else TablerIcons.PlayerPlay,
                                 "Пауза или воспроизведение", tint = Color.Black,
                                 modifier = Modifier.size(34.dp))
