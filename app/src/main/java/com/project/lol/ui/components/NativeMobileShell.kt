@@ -744,8 +744,9 @@ fun NativeMobileShell(
                 Brush.verticalGradient(listOf(tone, tone.copy(alpha = .5f), Color(0xFF171018)))
             ).semantics { paneTitle = "Сейчас играет"; isTraversalGroup = true }) {
                 val fontScale = LocalDensity.current.fontScale
+                val contentWidth = (maxWidth - 48.dp).coerceAtLeast(0.dp)
                 val side = PlayerSheetPolicy.artworkSideDp(
-                    (maxWidth.value - 48f).coerceAtLeast(0f), maxHeight.value, fontScale
+                    contentWidth.value, maxHeight.value, fontScale
                 ).dp
                 val viewportHeight = maxHeight
                 // Keep touch targets full-size. Short screens and large fonts get scrolling,
@@ -808,7 +809,7 @@ fun NativeMobileShell(
                     }
                     Spacer(Modifier.height(20.dp))
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
-                        .widthIn(min = (maxWidth - 48.dp).coerceAtLeast(0.dp)),
+                        .widthIn(min = contentWidth),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
                         ToolIcon(TablerIcons.ArrowsSort, "Перемешать", onShuffle, if(track.shuffle) green else white, 26)
