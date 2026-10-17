@@ -64,7 +64,7 @@ assert.equal(probe.qaCards.fromAnchor(overlay).title,'My playlist','Overlay lost
 assert.equal(probe.qaCards.fromAnchor(other.children[0]).image,'https://i.scdn.co/image/wrong','Neighbouring cover mixed');
 assert.equal(probe.qaCards.allowedPath('/intl-es-419/playlist/Good'),'/playlist/Good');
 const gradle=fs.readFileSync(path.join(root,'app/build.gradle.kts'),'utf8');
-assert(gradle.includes('applicationId = "com.project.lol"')&&gradle.includes('versionCode = 46'));
+assert(gradle.includes('applicationId = "com.project.lol"')&&gradle.includes('versionCode = 47'));
 const manifest=fs.readFileSync(path.join(root,'app/src/main/AndroidManifest.xml'),'utf8');
 assert(manifest.includes('android:authorities="${applicationId}.artwork"')&&!manifest.includes('com.spotify.mobile.android.mediaapi'));
 const host=fs.readFileSync(path.join(source,'webview/WebViewHost.kt'),'utf8');
@@ -85,4 +85,15 @@ assert(chrome.includes('translationY = currentFraction() * size.height'),'Player
 assert(!/evaluateJavascript|AndBridge|setInterval/.test(chrome),'Visual motion must not control the audio engine');
 assert(shell.includes('PlayerSheetPolicy.miniHeightDp')&&shell.includes('.progressSemantics(progress(track))'));
 assert(!shell.includes('if (swipe > 95f)'),'Legacy non-interactive swipe restored');
+assert(chrome.includes('Animatable(if (visible) 0f else 1f)'), 'Restored open player must not replay entry');
+assert(chrome.includes('val start = currentFraction()')&&chrome.includes('dragPx = start * heightPx'),
+ 'Interrupting a return must retain the displayed drag offset');
+assert(chrome.includes('detectTapGestures { }'), 'Revealed background must not receive taps through the sheet');
+assert(shell.includes('PlayerSheetPolicy.artworkSideDp')&&shell.includes('.verticalScroll(rememberScrollState())'),
+ 'Expanded player needs bounded artwork and scroll access on short/large-text screens');
+assert(shell.includes('Triple(track.title, track.artist, track.duration)')&&shell.includes('key(seekIdentity)')&&
+ shell.includes('currentIdentity.value == seekIdentity')&&shell.includes('enabled = track.duration > 0L'),
+ 'A stale or unknown-duration seek must not dispatch');
+assert(shell.includes('clearAndSetSemantics')&&shell.includes('paneTitle = "Сейчас играет"'),
+ 'Background semantics must be hidden while the player pane is open');
 console.log('PASS: '+checked+' embedded scripts; metadata pacing/seek/restart/artwork; native play/navigation; independent package/provider; guarded bridge and transport.');

@@ -7,6 +7,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
@@ -63,7 +64,8 @@ internal fun NativePlayerSheet(
     onDismiss: () -> Unit,
     content: @Composable (close: () -> Unit, dragHandle: Modifier) -> Unit
 ) {
-    val position = remember { Animatable(1f) }
+    // A restored open player is already on screen; do not replay entry on rotation.
+    val position = remember { Animatable(if (visible) 0f else 1f) }
     var rendered by remember { mutableStateOf(visible) }
     var canDrag by remember { mutableStateOf(false) }
     var dragging by remember { mutableStateOf(false) }
@@ -74,10 +76,12 @@ internal fun NativePlayerSheet(
     val currentDismiss = rememberUpdatedState(onDismiss)
     val scope = rememberCoroutineScope()
     val settleJob = remember { arrayOfNulls<Job>(1) }
+    val gestureEpoch = remember { intArrayOf(0) }
 
     fun currentFraction(): Float = if (dragging) PlayerSheetPolicy.fraction(dragPx, heightPx) else position.value
 
     LaunchedEffect(visible) {
+        gestureEpoch[0]++
         settleJob[0]?.cancel()
         canDrag = false
         if (visible) {
@@ -85,7 +89,9 @@ internal fun NativePlayerSheet(
             rendered = true
             position.snapTo(start)
             dragging = false
-            position.animateTo(0f, tween(NativeChromeMotion.EnterMillis, easing = NativeChromeMotion.SheetEasing))
+            if (position.value != 0f) {
+                position.animateTo(0f, tween(NativeChromeMotion.EnterMillis, easing = NativeChromeMotion.SheetEasing))
+            }
             canDrag = true
         } else if (rendered) {
             position.snapTo(currentFraction())
@@ -101,9 +107,13 @@ internal fun NativePlayerSheet(
         if (!dragging || !currentVisible.value) return
         val fraction = currentFraction()
         val dismiss = PlayerSheetPolicy.shouldDismiss(dragPx, heightPx, velocity, density, cancelled)
+        val epoch = ++gestureEpoch[0]
         settleJob[0]?.cancel()
         settleJob[0] = scope.launch {
+            if (gestureEpoch[0] != epoch || !currentVisible.value) return@launch
             position.snapTo(fraction)
+            // snapTo can suspend behind cancellation; an older release must not finish a newer drag.
+            if (gestureEpoch[0] != epoch || !currentVisible.value) return@launch
             dragging = false
             if (dismiss) {
                 currentDismiss.value()
@@ -118,8 +128,10 @@ internal fun NativePlayerSheet(
         var fingerTravel = 0f
         detectVerticalDragGestures(
             onDragStart = {
+                val start = currentFraction()
+                gestureEpoch[0]++
                 settleJob[0]?.cancel()
-                dragPx = position.value * heightPx
+                dragPx = start * heightPx
                 dragging = true
                 tracker.resetTracking()
                 fingerTravel = 0f
@@ -141,13 +153,17 @@ internal fun NativePlayerSheet(
         )
     }
 
-    Box(Modifier.fillMaxSize()
-        .onSizeChanged { size ->
-            if (dragging) dragPx = PlayerSheetPolicy.fraction(dragPx, heightPx) * size.height
-            heightPx = size.height.toFloat()
+    Box(Modifier.fillMaxSize()) {
+        // Keep the revealed area inert during a pull/exit. No dimming or blank button semantics.
+        Box(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures { } })
+        Box(Modifier.fillMaxSize()
+            .onSizeChanged { size ->
+                if (dragging) dragPx = PlayerSheetPolicy.fraction(dragPx, heightPx) * size.height
+                heightPx = size.height.toFloat()
+            }
+            .graphicsLayer { translationY = currentFraction() * size.height }
+            .testTag("native-player-sheet")) {
+            content({ if (currentVisible.value) currentDismiss.value() }, dragHandle)
         }
-        .graphicsLayer { translationY = currentFraction() * size.height }
-        .testTag("native-player-sheet")) {
-        content({ if (currentVisible.value) currentDismiss.value() }, dragHandle)
     }
 }

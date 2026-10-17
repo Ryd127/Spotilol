@@ -1,11 +1,13 @@
 # Building Spotilol
 
-Current feature-branch source version: **1.2.4-native16 (46)**
+Current feature-branch source version: **1.2.4-native17 (47)**
 Application ID: `com.project.lol`
 
 This branch combines upstream Spotilol 1.2.4 with the existing native Android interface, guarded playback controls, build hardening, Android 16 KiB page-size compatibility and origin-scoped WebView bridge. Stable main remains separate and unchanged. See `docs/INTEGRATION-1.2.4.md` for provenance and device-test limitations.
 
 Native16 adds the first UI-only motion/mini-player prototype described in `docs/NATIVE16-UI-PROTOTYPE.md`. It does not replace the playback engine or bundle Spotify's decompiled implementation/fonts.
+
+Native17 hardens that prototype for short screens, large text, interrupted dragging, restored player state and track changes during seeking. See `docs/NATIVE17-UI-POLISH.md` for the exact scope and remaining device checks.
 
 The checked-in app tree is the actual build input. Historical scripts under `ci/hybrid/` reconstruct earlier experiments only; do not run them over this branch or replace its source with an upstream download.
 
@@ -118,7 +120,7 @@ A tag named exactly `v<versionName>` triggers release publication after the buil
 For example:
 
 ```text
-v1.2.4-native16
+v1.2.4-native17
 ```
 
 The release job verifies that the tag matches the APK version, requires production signing, validates the certificate and SHA-256 checksum, then publishes:

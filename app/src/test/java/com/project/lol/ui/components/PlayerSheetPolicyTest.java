@@ -50,4 +50,37 @@ public class PlayerSheetPolicyTest {
         assertEquals(200, PlayerSheetPolicy.progressAnimationMillis(1000, 1850, true));
         assertEquals(200, PlayerSheetPolicy.progressAnimationMillis(1000, 3000, true));
     }
+
+    @Test public void artworkReservesControlsInShortAndLargeTextLayouts() {
+        assertEquals(363f, PlayerSheetPolicy.artworkSideDp(363, 800, 1), 0f);
+        assertEquals(284f, PlayerSheetPolicy.artworkSideDp(363, 700, 1), 0f);
+        assertEquals(120f, PlayerSheetPolicy.artworkSideDp(750, 360, 1), 0f);
+        assertTrue(PlayerSheetPolicy.artworkSideDp(363, 800, 2) <
+                PlayerSheetPolicy.artworkSideDp(363, 800, 1));
+        assertEquals(90f, PlayerSheetPolicy.artworkSideDp(90, 360, 1), 0f);
+        assertEquals(365f, PlayerSheetPolicy.artworkSideDp(750, 1600, 1), 0f);
+        assertEquals(0f, PlayerSheetPolicy.artworkSideDp(Float.NaN, 800, 1), 0f);
+        assertEquals(0f, PlayerSheetPolicy.artworkSideDp(360, Float.POSITIVE_INFINITY, 1), 0f);
+    }
+
+    @Test public void seekTargetsStayInsideKnownDuration() {
+        assertEquals(90000L, PlayerSheetPolicy.seekPosition(180000, .5f));
+        assertEquals(0L, PlayerSheetPolicy.seekPosition(180000, -.3f));
+        assertEquals(180000L, PlayerSheetPolicy.seekPosition(180000, 1.2f));
+        assertEquals(0L, PlayerSheetPolicy.seekPosition(0, .5f));
+        assertEquals(0L, PlayerSheetPolicy.seekPosition(-1, .5f));
+        assertEquals(0L, PlayerSheetPolicy.seekPosition(180000, Float.NaN));
+    }
+
+    @Test public void artworkBoundsHoldAcrossViewportAndFontMatrix() {
+        for (float width : new float[]{90, 240, 320, 411, 800}) {
+            for (float height : new float[]{320, 640, 800, 1000}) {
+                for (float scale : new float[]{.85f, 1f, 1.3f, 2f, 3f}) {
+                    float side = PlayerSheetPolicy.artworkSideDp(width, height, scale);
+                    assertTrue(side > 0 && side <= width && side <= 365f);
+                    assertTrue(side >= Math.min(120f, width));
+                }
+            }
+        }
+    }
 }
