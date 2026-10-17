@@ -46,15 +46,6 @@ class UpdateChecker(private val context: Context) {
     }
 
     private fun isNewer(latest: String, current: String): Boolean {
-        val latestParts = latest.split(".")
-        val currentParts = current.split(".")
-        val size = maxOf(latestParts.size, currentParts.size)
-        for (i in 0 until size) {
-            val l = latestParts.getOrNull(i)?.toIntOrNull() ?: 0
-            val c = currentParts.getOrNull(i)?.toIntOrNull() ?: 0
-            if (l > c) return true
-            if (l < c) return false
-        }
-        return false
+        return VersionPolicy.isNewer(latest, current)
     }
 }

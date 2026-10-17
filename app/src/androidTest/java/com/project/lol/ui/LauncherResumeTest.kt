@@ -19,7 +19,8 @@ class LauncherResumeTest {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
         context.getSharedPreferences("spotilol_prefs", Context.MODE_PRIVATE).edit()
-            .putBoolean("OnboardingDone", true).putBoolean("ServiceOn", false).putBoolean("OfflineMode", false).commit()
+            .putBoolean("OnboardingDone", true).putBoolean("ServiceOn", false).putBoolean("OfflineMode", false)
+            .putLong("LastUpdateCheck", System.currentTimeMillis()).commit()
         val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
         assertNotNull(launch)
         assertEquals(MainActivity::class.java.name, launch!!.component!!.className)
