@@ -489,6 +489,7 @@ jobs:
           timeout 240 bash -c 'until [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" == 1 ]]; do sleep 2; done'
           adb shell input keyevent 82
       - name: Execute rendered Compose and launcher scenarios
+        id: ui_tests
         shell: bash
         run: |
           set -euo pipefail
@@ -498,8 +499,13 @@ jobs:
         shell: bash
         run: |
           mkdir -p ui-screenshots
-          adb pull /sdcard/Android/data/com.project.lol/files/ui-regression ui-screenshots/ || true
+          adb pull /sdcard/Pictures/SpotilolUiRegression ui-screenshots/ || true
           adb logcat -d -t 1500 > ui-logcat.txt || true
+          if [[ '${{ steps.ui_tests.outcome }}' == 'success' ]]; then
+            for shot in home-fixture artist-fixture search-fixture player-fixture player-restored-fixture player-large-text-fixture; do
+              test -s "ui-screenshots/SpotilolUiRegression/${shot}.png"
+            done
+          fi
       - uses: actions/upload-artifact@v7
         if: always()
         with:

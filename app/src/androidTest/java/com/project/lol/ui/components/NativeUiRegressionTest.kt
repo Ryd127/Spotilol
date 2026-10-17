@@ -5,6 +5,10 @@ import android.graphics.Canvas
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
+import android.content.ContentValues
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.LruCache
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
@@ -76,6 +80,23 @@ class NativeUiRegressionTest {
         val folder = File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null), "ui-regression")
         check(folder.isDirectory || folder.mkdirs())
         File(folder, "$name.png").outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        // Gradle removes test apps after execution. Retain synthetic QA images outside app data.
+        // This runs only in androidTest on an isolated emulator, never in the release application.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = InstrumentationRegistry.getInstrumentation().targetContext.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, "$name.png")
+                put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/SpotilolUiRegression")
+                put(MediaStore.Images.Media.IS_PENDING, 1)
+            }
+            val uri = checkNotNull(resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values))
+            checkNotNull(resolver.openOutputStream(uri)).use {
+                check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it))
+            }
+            values.clear(); values.put(MediaStore.Images.Media.IS_PENDING, 0)
+            check(resolver.update(uri, values, null, null) == 1)
+        }
     }
 
     @Test fun artistTracksAndBackNavigationDoNotBecomeSidebarArtists() {
