@@ -99,6 +99,10 @@ assert(shell.includes('clearAndSetSemantics')&&shell.includes('paneTitle = "Се
  'Background semantics must be hidden while the player pane is open');
 assert(shell.includes('Modifier.fillMaxSize().background(bg).background('),'Expanded player requires an opaque base');
 assert(!activity.includes('Открыть Native UI'),'Internal pilot terminology must not appear on the launch screen');
+assert(activity.includes('intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)'),
+ 'A warm launcher tap must not reload the login document');
+assert(activity.includes('(!nativeMobileActive && webView?.canGoBack() == true)'),
+ 'Native-root back must not navigate hidden Spotify web history');
 const splash=fs.readFileSync(path.join(source,'ui/SplashActivity.kt'),'utf8');
 assert(!splash.includes('delay(SPLASH_MIN_MS)'),'Do not reintroduce the forced four-second launch delay');
 assert(!fs.readFileSync(path.join(source,'webview/injections/AndroidTracker.kt'),'utf8').includes('ab67616d000082c1'),

@@ -63,6 +63,12 @@ async function run(){
  assert.equal(page.title,'Album title');assert.equal(page.items[0].kind,'track');
  s.splNativeNavigate('/playlist/PlaylistA');await turns();page=JSON.parse(s.splNativeSnapshot());
  assert.equal(page.title,'Playlist title');assert.equal(page.cover,art('playlist',640).url);
+ const liked=environment();
+ liked.state.mediaLib={playlists:[{id:'spotify:collection:tracks',name:'Saved favorites'}]};
+ liked.state.likedSongsCache=[{id:song.uri,name:song.name,image:art('large',640).url,artists:['Real artist']}];
+ liked.state.splLikedName=()=> 'Wrong hidden-page heading';
+ liked.state.splNativeNavigate('/collection/tracks');await turns();
+ assert.equal(JSON.parse(liked.state.splNativeSnapshot()).title,'Saved favorites','Liked Songs borrowed the hidden web page title');
  // Deliberately ignore abort in this fixture: even an uncancellable late result cannot win.
  const race=environment();let releaseA;
  const regular=race.state.mngFetch;

@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.SliderState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -55,8 +56,10 @@ internal fun NativeSeekControls(track: NativeMiniTrack, onSeek: (Long) -> Unit) 
         }
         val raw = if (track.duration > 0) (track.position.toFloat() / track.duration).coerceIn(0f, 1f) else 0f
         val value = preview ?: requested ?: raw
+        val sliderState = remember { SliderState(value) }
+        sliderState.value = value
         Column(Modifier.fillMaxWidth()) {
-            Slider(value = value, enabled = track.duration > 0L,
+            Slider(state = sliderState, enabled = track.duration > 0L,
                 onValueChange = { preview = it },
                 onValueChangeFinished = {
                     if (currentIdentity.value == seekIdentity && track.duration > 0L) {

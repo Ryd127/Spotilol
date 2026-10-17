@@ -1,6 +1,11 @@
 package com.project.lol.ui.components
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Shader
+import android.util.LruCache
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -12,6 +17,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.captureToImage
+import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -28,18 +34,41 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.project.lol.ui.theme.SpotifyTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
 
 /** Render/click/gesture tests with clearly synthetic data, never a personal Spotify session. */
 @RunWith(AndroidJUnit4::class)
+@OptIn(ExperimentalTestApi::class)
 class NativeUiRegressionTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
-    private val artist = MobileBrowseItem("/artist/ArtistA", "Artist A", "Исполнитель", kind = "artist")
-    private val song = MobileBrowseItem("/track/1234567890123456789012", "Real song", "Artist A", kind = "track")
-    private val track = NativeMiniTrack(title = "Test track", artist = "Test artist", position = 60000,
+    private val artistArt = "https://i.scdn.co/image/fixture-artist"
+    private val albumArt = "https://i.scdn.co/image/fixture-album"
+    private val artist = MobileBrowseItem("/artist/ArtistA", "Artist A", "Исполнитель", image = artistArt, kind = "artist")
+    private val song = MobileBrowseItem("/track/1234567890123456789012", "Real song", "Artist A", image = albumArt, kind = "track")
+    private val track = NativeMiniTrack(title = "Test track", artist = "Test artist", cover = albumArt, position = 60000,
         duration = 180000, playing = true)
+
+    @Before fun generatedArtworkFixture() {
+        // Deliberately labelled synthetic art; no network, copyrighted album asset or account data.
+        val owner = Class.forName("com.project.lol.ui.components.NativeArtwork")
+        val field = owner.getDeclaredField("cache").apply { isAccessible = true }
+        @Suppress("UNCHECKED_CAST")
+        val cache = field.get(null) as LruCache<String, Bitmap>
+        listOf(artistArt to 0xFF285CAF.toInt(), albumArt to 0xFFAC2F69.toInt()).forEach { (url, color) ->
+            val bitmap = Bitmap.createBitmap(640, 640, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                shader = LinearGradient(0f, 0f, 640f, 640f, color, 0xFF181C35.toInt(), Shader.TileMode.CLAMP)
+            }
+            canvas.drawRect(0f, 0f, 640f, 640f, paint)
+            paint.shader = null; paint.color = android.graphics.Color.WHITE; paint.textSize = 64f
+            canvas.drawText("FIXTURE", 60f, 340f, paint)
+            cache.put(url, bitmap)
+        }
+    }
 
     private fun screenshot(name: String) {
         rule.waitForIdle()

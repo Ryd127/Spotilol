@@ -273,7 +273,8 @@ object NativeMobileJs {
           var page=pages.get(path),entity=lib.find(function(item){return item.path===path;});
           if(page){
             var details=page.details||{};
-            return JSON.stringify({ready:true,path:path,title:clean(details.name||(entity&&entity.title),145),
+            var pageTitle=path==='/collection/tracks'?((entity&&entity.title)||'Любимые треки'):(details.name||(entity&&entity.title));
+            return JSON.stringify({ready:true,path:path,title:clean(pageTitle,145),
               cover:clean(details.image||(entity&&entity.image),800),creator:clean(details.creator,100),meta:'',
               items:page.items,library:lib,sections:[],loadingLibrary:libPending,loadingPage:page.loading,error:page.error});
           }

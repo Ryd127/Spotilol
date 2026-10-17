@@ -369,7 +369,8 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
             val accentColor = MaterialTheme.colorScheme.primary
 
             BackHandler(
-                enabled = settingsDialogOpen || ctxSheetOpen || videoFullscreenState.value || playerExpanded || webView?.canGoBack() == true
+                enabled = settingsDialogOpen || ctxSheetOpen || videoFullscreenState.value || playerExpanded ||
+                    (!nativeMobileActive && webView?.canGoBack() == true)
             ) {
                 when {
                     settingsDialogOpen -> settingsDialogOpen = false
@@ -1682,6 +1683,8 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
         val link = extractSpotifyLink(intent)
         Logger.i(TAG, "new intent received: link=${link ?: "none"}")
         if (link == null) {
+            // A launcher tap means resume this task, never reset the authenticated document.
+            if (intent.action == Intent.ACTION_MAIN && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) return
             val loggedIn = prefs.getBoolean("LoggedIn", false)
             if (!loggedIn) {
                 webView?.loadUrl("https://accounts.spotify.com/login")
