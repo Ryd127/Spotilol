@@ -15,7 +15,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -33,6 +32,7 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.project.lol.ui.theme.SpotifyTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Before
 import org.junit.Test
@@ -134,6 +134,22 @@ class NativeUiRegressionTest {
         restoration.emulateSavedInstanceStateRestore()
         rule.onNodeWithTag("native-player-sheet").assertIsDisplayed()
         screenshot("player-restored-fixture")
+    }
+
+    @Test fun seekTapCommitsOneBoundedRequestAndTrackChangeDoesNotRepeatIt() {
+        val requests = mutableListOf<Long>()
+        var current by mutableStateOf(track)
+        rule.setContent { SpotifyTheme { NativeSeekControls(current) { requests.add(it) } } }
+        rule.onNodeWithTag("native-seek").performTouchInput {
+            down(Offset(center.x * 1.5f, center.y)); up()
+        }
+        rule.runOnIdle {
+            assertEquals(1, requests.size)
+            assertTrue(requests.single() in 110000L..160000L)
+            current = track.copy(title = "Another track", duration = 120000L, position = 0L)
+        }
+        rule.waitForIdle()
+        rule.runOnIdle { assertEquals(1, requests.size) }
     }
 
     @Test fun largeTextPlayerKeepsFooterReachable() {
