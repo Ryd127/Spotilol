@@ -205,6 +205,8 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
     private val nativeMobileSessionReady = mutableStateOf(false)
     private val nativeWebFallbackState = mutableStateOf(false)
     private val nativeMiniTrackState = mutableStateOf(NativeMiniTrack())
+    private var nativeSnapshotStartedAt = 0L
+    private var nativeSnapshotSequence = 0L
     private val webViewError = mutableStateOf<Pair<Int, String>?>(null)
     private var pendingLink: String? = null
     private var pendingMediaSearch: String? = null
@@ -241,6 +243,19 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
             isAppearanceLightNavigationBars = false
         }
         super.onCreate(savedInstanceState)
+
+        prefs = getSharedPreferences("spotilol_prefs", MODE_PRIVATE)
+        // Launch the retained main task directly. Only first-run permissions need onboarding.
+        if (!prefs.getBoolean("OnboardingDone", false)) {
+            startActivity(Intent(intent).setClass(this, SplashActivity::class.java))
+            finish()
+            return
+        }
+        if (prefs.getBoolean("OfflineMode", false)) {
+            startActivity(Intent(this, OfflineActivity::class.java))
+            finish()
+            return
+        }
 
         // Track screen view
         analytics?.logEvent(FirebaseAnalytics.Event.SCREEN_VIEW, Bundle().apply {
@@ -324,7 +339,10 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
             val nativeMiniEnabled = nativeMiniEnabledState.value
             val nativeMobileEnabled = nativeMobileEnabledState.value
             val nativeBrowse = nativeMobileBrowseState.value
-            val nativeMobileActive = nativeMobileEnabled && !nativeWebFallbackState.value && serviceEnabled && nativeMobileSessionReady.value && webViewError.value == null && !pipVideoActive.value && !videoFullscreenState.value && !wideVideoState.value
+            val nativePlayerLoading = prefs.getBoolean("LoggedIn", false) && WebSecurityPolicy.isPlayer(webView?.url)
+            val nativeMobileActive = nativeMobileEnabled && !nativeWebFallbackState.value && serviceEnabled &&
+                (nativeMobileSessionReady.value || nativePlayerLoading) && webViewError.value == null &&
+                !pipVideoActive.value && !videoFullscreenState.value && !wideVideoState.value
             val pipFilling = pipVideoActive.value
             val videoFullscreen = videoFullscreenState.value
             val wideVideoFullscreen = wideVideoState.value &&
@@ -646,32 +664,8 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
                                                 }
                                             }
                                         }
-                                        browser.evaluateJavascript(
-                                            "window.splNativeSnapshot?window.splNativeSnapshot():null"
-                                        ) { raw ->
-                                            if (raw == null || raw == "null") {
-                                                // A replaced document may have lost the JS bridge.
-                                                // The underlying Spotify player stays untouched.
-                                                if (WebSecurityPolicy.isPlayer(browser.url)) {
-                                                    browser.evaluateJavascript(NativeMobileJs.INSTALL, null)
-                                                }
-                                            } else {
-                                                runCatching {
-                                                    val decoded = org.json.JSONTokener(raw).nextValue() as? String
-                                                    if (decoded != null) {
-                                                        val update = MobileBrowseState.parse(decoded)
-                                                        if (update.ready) {
-                                                            nativeMobileSessionReady.value = true
-                                                        }
-                                                        // Keep the last useful page across transient
-                                                        // Spotify React DOM unmounts / route transitions.
-                                                        if (update.ready || !nativeMobileBrowseState.value.ready) {
-                                                            if (nativeMobileBrowseState.value != update)
-                                                                nativeMobileBrowseState.value = update
-                                                        }
-                                                    }
-                                                }.onFailure { Logger.d(TAG, "native mobile snapshot unavailable") }
-                                            }
+                                        if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                                            refreshNativeBrowse(browser)
                                         }
                                     }
                                     // The login page and WebView error screen must never be covered
@@ -681,7 +675,7 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
                                         if (nativeMobileBrowseState.value.ready)
                                             nativeMobileBrowseState.value = MobileBrowseState()
                                     }
-                                    delay(1200)
+                                    delay(if (nativeMobileBrowseState.value.loadingPage) 400L else 1500L)
                                 }
                             }
 
@@ -756,8 +750,7 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
                                         val value = JSONObject.quote(path)
                                         webView?.evaluateJavascript(
                                             "window.splNativeNavigate&&window.splNativeNavigate(" + value + ")",
-                                            null
-                                        )
+                                        ) { webView?.let(::refreshNativeBrowse) }
                                     },
                                     onPlay = { uri, context ->
                                         webView?.evaluateJavascript(
@@ -780,14 +773,17 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
                                     onShuffle = { webView?.evaluateJavascript("actToggleShuffle()", null) },
                                     onRepeat = { webView?.evaluateJavascript("actRepeat()", null) },
                                     onOpenWeb = {
-                                        nativeWebFallbackState.value = true
-                                    }
+                                        webView?.evaluateJavascript("window.splNativeRevealWeb&&window.splNativeRevealWeb()") {
+                                            nativeWebFallbackState.value = true
+                                        }
+                                    },
+                                    onRetry = { webView?.evaluateJavascript("window.splNativeRetry&&window.splNativeRetry()", null) }
                                 )
                             }
 
                             // Recovery is available even if the old preference was disabled
                             // or a page reload bypassed the initial ready callback.
-                            if (!nativeMobileActive && serviceEnabled && !pipFilling &&
+                            if (nativeWebFallbackState.value && nativeMobileEnabled && !nativeMobileActive && serviceEnabled && !pipFilling &&
                                 !videoFullscreen && !wideVideoFullscreen &&
                                 webViewError.value == null &&
                                 webView?.url?.let { WebSecurityPolicy.isPlayer(it) } == true) {
@@ -805,7 +801,7 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
                                         }
                                         .padding(horizontal = 15.dp, vertical = 12.dp)
                                 ) {
-                                    Text("♫ Открыть Native UI",
+                                    Text(if (nativeWebFallbackState.value) "Вернуться в приложение" else "Открыть плеер",
                                         color = Color.Black, fontWeight = FontWeight.Bold)
                                 }
                             }
@@ -1672,6 +1668,7 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         if (captureMediaSearch(intent)) {
             webView?.let { view ->
                 if (isPlayerUrl(view.url)) {
@@ -1794,6 +1791,31 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
         syncNativeMiniOverlay(view)
         view.evaluateJavascript(NativeMobileJs.INSTALL, null)
         nativeMobileSessionReady.value = true
+        refreshNativeBrowse(view)
+    }
+
+    private fun refreshNativeBrowse(browser: WebView) {
+        if (browser !== webView || !WebSecurityPolicy.isPlayer(browser.url)) return
+        val now = android.os.SystemClock.elapsedRealtime()
+        if (nativeSnapshotStartedAt != 0L && now - nativeSnapshotStartedAt < 2000L) return
+        nativeSnapshotStartedAt = now
+        val request = ++nativeSnapshotSequence
+        browser.evaluateJavascript("window.splNativeSnapshot?window.splNativeSnapshot():null") { raw ->
+            if (nativeSnapshotStartedAt == now) nativeSnapshotStartedAt = 0L
+            if (request != nativeSnapshotSequence || browser !== webView || !WebSecurityPolicy.isPlayer(browser.url)) return@evaluateJavascript
+            if (raw == null || raw == "null") {
+                browser.evaluateJavascript(NativeMobileJs.INSTALL, null)
+                return@evaluateJavascript
+            }
+            runCatching {
+                val decoded = org.json.JSONTokener(raw).nextValue() as? String ?: return@runCatching
+                val update = MobileBrowseState.parse(decoded)
+                if (update.ready) nativeMobileSessionReady.value = true
+                if (update.ready || !nativeMobileBrowseState.value.ready) {
+                    if (nativeMobileBrowseState.value != update) nativeMobileBrowseState.value = update
+                }
+            }.onFailure { Logger.d(TAG, "native browse state unavailable") }
+        }
     }
 
     override fun attachBaseContext(newBase: Context) {

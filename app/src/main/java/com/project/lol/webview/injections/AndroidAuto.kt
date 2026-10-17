@@ -2,6 +2,28 @@ package com.project.lol.webview.injections
 
 object AndroidAuto {
     const val CONTENT = """
+            // Shared by browse clients. Prefer the largest real image, not the first thumbnail.
+            window.splBestImage = function(value) {
+                var best='',score=-1,visited=0;
+                function visit(v,depth){
+                    if(!v||depth>7||++visited>200)return;
+                    if(Array.isArray(v)){v.slice(0,40).forEach(function(x){visit(x,depth+1);});return;}
+                    if(typeof v==='string')v={url:v};
+                    if(typeof v!=='object')return;
+                    var url=v.url||v.src||'';
+                    if(/^https:\/\//i.test(url)&&!/(equaliz|placeholder|favicon|playing[-_.])/i.test(url)){
+                        try{
+                            var host=new URL(url).hostname.toLowerCase();
+                            if(host==='scdn.co'||host.endsWith('.scdn.co')||host==='spotifycdn.com'||host.endsWith('.spotifycdn.com')){
+                                var rank=Math.max(0,Number(v.width)||0)*Math.max(0,Number(v.height)||Number(v.width)||0);
+                                if(rank>score){score=rank;best=url;}
+                            }
+                        }catch(e){}
+                    }
+                    ['sources','items','images','coverArt','visuals','avatarImage','albumOfTrack','album'].forEach(function(k){if(v[k])visit(v[k],depth+1);});
+                }
+                visit(value,0);return best;
+            };
             window.getGqlHash = function(opName, fb) {
                 var h = window.opHash(opName, null);
                 if (h) return h;
@@ -130,9 +152,15 @@ object AndroidAuto {
                 })();
             } catch(e){}
 
-            async function fetchMediaItems(parentId) {
+            async function fetchMediaItems(parentId, options) {
+                options=options||{};
+                function deliver(items,details){
+                    if(!options.native)AndBridge.onMediaItemsLoaded(parentId,JSON.stringify(items));
+                    return options.native?{items:items,details:details||{}}:items;
+                }
                 try {
                     await window.ensureAuthToken();
+                    if(options.native&&!window.spotAuthToken)throw new Error('Authentication is not ready');
                     if (parentId === 'playlists' || parentId === 'albums' || parentId === 'artists' || parentId === 'podcasts') {
                         if (!window.mediaLib || !window.mediaLib[parentId] || !window.mediaLib[parentId].length) {
                             window.pendingMediaRequests.add(parentId);
@@ -146,18 +174,17 @@ object AndroidAuto {
                             return { id: item.id, name: item.name, image: img, artists: item.artists || [], browsable: true, isGrid: true };
                         });
                         window.pendingMediaRequests.delete(parentId);
-                        AndBridge.onMediaItemsLoaded(parentId, JSON.stringify(items));
-                        return;
+                        return deliver(items);
                     }
 
                     if (parentId === 'spotify:collection:tracks' || parentId.indexOf(':collection') !== -1 || parentId.indexOf('spotify:collection') === 0) {
                         var tracks = await getLikedSongsTracks();
-                        AndBridge.onMediaItemsLoaded(parentId, JSON.stringify(tracks));
-                        return;
+                        return deliver(tracks,{name:window.splLikedName(),kind:'collection'});
                     }
 
                     if (parentId.indexOf('spotify:playlist:') === 0 || (parentId.indexOf(':user:') !== -1 && parentId.indexOf(':playlist:') !== -1)) {
                         var resp = await (window.mngFetch || oriFetch)('https://api-partner.spotify.com/pathfinder/v2/query', {
+                            signal: options.signal,
                             method: 'POST',
                             headers: {
                                 'Authorization': window.spotAuthToken,
@@ -175,6 +202,7 @@ object AndroidAuto {
                         if (!resp.ok) throw new Error('Failed to fetch playlist: ' + resp.statusText);
                         var data = await resp.json();
                         var playlistObj = data.data && (data.data.playlistV2 || data.data.playlist || data.data.playlistUnion || data.data.me && data.data.me.library || data.data.me);
+                        if(options.native&&!playlistObj)throw new Error('Playlist response unavailable');
                         var content = playlistObj && (playlistObj.content || playlistObj.tracks) || playlistObj;
                         var items = (content && content.items) || (playlistObj && playlistObj.items) || [];
                         var tracks = items.map(function(elem) {
@@ -185,16 +213,17 @@ object AndroidAuto {
                             if (!uri || uri.indexOf(':track:') === -1) return null;
                             var artists = (trackData.artists && trackData.artists.items) ? trackData.artists.items.map(function(a) { return a.profile && a.profile.name; }).filter(Boolean) : (trackData.artists || []).map(function(a) { return a.name; }).filter(Boolean);
                             var albumData = trackData.albumOfTrack || trackData.album || {};
-                            var coverUrl = (albumData.coverArt && albumData.coverArt.sources && albumData.coverArt.sources[0] && albumData.coverArt.sources[0].url) || (albumData.images && albumData.images[0] && albumData.images[0].url) || null;
+                            var coverUrl = window.splBestImage(albumData);
                             return { id: uri, name: trackData.name || trackData.title || 'Unknown Track', image: coverUrl, artists: artists, browsable: false };
                         }).filter(Boolean);
-                        AndBridge.onMediaItemsLoaded(parentId, JSON.stringify(tracks));
-                        return;
+                        return deliver(tracks,{name:playlistObj&&playlistObj.name,kind:'playlist',image:window.splBestImage(playlistObj),
+                            creator:playlistObj&&((playlistObj.ownerV2&&playlistObj.ownerV2.data&&playlistObj.ownerV2.data.name)||(playlistObj.owner&&playlistObj.owner.name))});
                     }
 
                     if (parentId.indexOf('spotify:album:') === 0) {
                         var albumId = parentId.split(':')[2];
                         var resp = await (window.mngFetch || oriFetch)('https://api-partner.spotify.com/pathfinder/v2/query', {
+                            signal: options.signal,
                             method: 'POST',
                             headers: {
                                 'Authorization': window.spotAuthToken,
@@ -212,7 +241,8 @@ object AndroidAuto {
                         if (!resp.ok) throw new Error('Failed to fetch album: ' + resp.statusText);
                         var data = await resp.json();
                         var albumData = data.data && (data.data.albumUnion || data.data.album || data.data.albumV2);
-                        var albumCover = (albumData && albumData.coverArt && albumData.coverArt.sources && albumData.coverArt.sources[0] && albumData.coverArt.sources[0].url) || (albumData && albumData.images && albumData.images[0] && albumData.images[0].url) || null;
+                        if(options.native&&!albumData)throw new Error('Album response unavailable');
+                        var albumCover = window.splBestImage(albumData);
                         var items = (albumData && (albumData.tracksV2 && albumData.tracksV2.items || albumData.tracks && albumData.tracks.items || albumData.tracks)) || [];
                         var tracks = items.map(function(elem) {
                             var trackObj = elem.track || (elem.item && elem.item.data) || elem;
@@ -222,13 +252,13 @@ object AndroidAuto {
                             var artists = (trackObj.artists && trackObj.artists.items) ? trackObj.artists.items.map(function(a) { return a.profile && a.profile.name; }).filter(Boolean) : [];
                             return { id: uri, name: trackObj.name || trackObj.title || 'Unknown Track', image: albumCover, artists: artists, browsable: false };
                         }).filter(Boolean);
-                        AndBridge.onMediaItemsLoaded(parentId, JSON.stringify(tracks));
-                        return;
+                        return deliver(tracks,{name:albumData&&albumData.name,kind:'album',image:albumCover});
                     }
 
                     if (parentId.indexOf('spotify:artist:') === 0) {
                         var artistId = parentId.split(':')[2];
                         var resp = await (window.mngFetch || oriFetch)('https://api-partner.spotify.com/pathfinder/v2/query', {
+                            signal: options.signal,
                             method: 'POST',
                             headers: {
                                 'Authorization': window.spotAuthToken,
@@ -246,6 +276,7 @@ object AndroidAuto {
                         if (!resp.ok) throw new Error('Failed to fetch artist: ' + resp.statusText);
                         var data = await resp.json();
                         var artistData = data.data && (data.data.artistUnion || data.data.artist);
+                        if(options.native&&!artistData)throw new Error('Artist response unavailable');
                         var items = (artistData && (artistData.discography && artistData.discography.topTracks && artistData.discography.topTracks.items || artistData.topTracks && artistData.topTracks.items || artistData.topTracks)) || [];
                         var tracks = items.map(function(elem) {
                             var trackObj = elem.track || (elem.item && elem.item.data) || elem;
@@ -254,16 +285,17 @@ object AndroidAuto {
                             if (!uri) return null;
                             var artists = (trackObj.artists && trackObj.artists.items) ? trackObj.artists.items.map(function(a) { return a.profile && a.profile.name; }).filter(Boolean) : [];
                             var albumData = trackObj.albumOfTrack || trackObj.album || {};
-                            var coverUrl = (albumData.coverArt && albumData.coverArt.sources && albumData.coverArt.sources[0] && albumData.coverArt.sources[0].url) || (albumData.images && albumData.images[0] && albumData.images[0].url) || null;
+                            var coverUrl = window.splBestImage(albumData);
                             return { id: uri, name: trackObj.name || trackObj.title || 'Unknown Track', image: coverUrl, artists: artists, browsable: false };
                         }).filter(Boolean);
-                        AndBridge.onMediaItemsLoaded(parentId, JSON.stringify(tracks));
-                        return;
+                        return deliver(tracks,{name:artistData&&((artistData.profile&&artistData.profile.name)||artistData.name),
+                            kind:'artist',image:window.splBestImage(artistData)});
                     }
 
                     if (parentId.indexOf('spotify:show:') === 0) {
                         var showId = parentId.split(':')[2];
                         var resp = await (window.mngFetch || oriFetch)('https://api.spotify.com/v1/shows/' + showId + '/episodes?limit=50', {
+                            signal: options.signal,
                             headers: {
                                 'Authorization': window.spotAuthToken,
                                 'Client-Token': window.spotCliToken,
@@ -276,21 +308,25 @@ object AndroidAuto {
                             var uri = e.uri || e._uri || (e.id ? 'spotify:episode:' + e.id : '') || '';
                             return { id: uri, name: e.name, image: (e.images && e.images[0] && e.images[0].url) || null, browsable: false };
                         });
-                        AndBridge.onMediaItemsLoaded(parentId, JSON.stringify(episodes));
-                        return;
+                        return deliver(episodes,{kind:'show'});
                     }
 
-                    AndBridge.onMediaItemsLoaded(parentId, '[]');
+                    return deliver([]);
                 } catch (e) {
+                    if(options.native)throw e;
                     console.error('Error loading media items for ' + parentId, e);
                     AndBridge.onMediaItemsLoaded(parentId, '[]');
                 }
             }
             window.fetchMediaItems = fetchMediaItems;
 
-            async function searchMediaItems(query) {
+            async function searchMediaItems(query, options) {
+                options=options||{};
                 try {
+                    await window.ensureAuthToken();
+                    if(options.native&&!window.spotAuthToken)throw new Error('Authentication is not ready');
                     var resp = await (window.mngFetch || oriFetch)('https://api-partner.spotify.com/pathfinder/v2/query', {
+                        signal: options.signal,
                         method: 'POST',
                         headers: {
                             'Authorization': window.spotAuthToken,
@@ -308,6 +344,7 @@ object AndroidAuto {
                     if (!resp.ok) throw new Error('Search failed: ' + resp.statusText);
                     var data = await resp.json();
                     var searchData = data.data && (data.data.searchV2 || data.data.search);
+                    if(options.native&&!searchData)throw new Error('Search response unavailable');
                     var results = [];
                     var seenUris = new Set();
 
@@ -347,7 +384,7 @@ object AndroidAuto {
                             if (owner) artistsList = [owner];
                             img = (data.images && data.images.items && data.images.items[0] && data.images.items[0].sources && data.images.items[0].sources[0] && data.images.items[0].sources[0].url) || (data.images && data.images[0] && data.images[0].url) || null;
                         }
-                        pushItem({ id: uri, name: data.name || data.title || 'Top Result', image: img, type: type, artists: artistsList, browsable: isBrowsable });
+                        pushItem({ id: uri, name: data.name || data.title || (data.profile&&data.profile.name) || 'Top Result', image: window.splBestImage(data)||img, type: type, artists: artistsList, browsable: isBrowsable });
                     });
 
                     var rawSongs = [];
@@ -359,7 +396,7 @@ object AndroidAuto {
                         if (!uri || uri.indexOf(':track:') === -1) return;
                         var artistsList = (data.artists && data.artists.items) ? data.artists.items.map(function(a) { return a.profile && a.profile.name; }).filter(Boolean) : (data.artists || []).map(function(a) { return a.name; }).filter(Boolean);
                         var albumData = data.albumOfTrack || data.album || {};
-                        var coverUrl = (albumData.coverArt && albumData.coverArt.sources && albumData.coverArt.sources[0] && albumData.coverArt.sources[0].url) || (albumData.images && albumData.images[0] && albumData.images[0].url) || null;
+                        var coverUrl = window.splBestImage(albumData);
                         rawSongs.push({ id: uri, name: data.name || data.title || 'Track', image: coverUrl, type: 'Song', artists: artistsList, browsable: false });
                     });
 
@@ -370,7 +407,7 @@ object AndroidAuto {
                         var uri = item.uri || (item.id ? 'spotify:album:' + item.id : '');
                         if (!uri) return;
                         var name = item.name || 'Album';
-                        var img = (item.coverArt && item.coverArt.sources && item.coverArt.sources[0] && item.coverArt.sources[0].url) || (item.images && item.images[0] && item.images[0].url) || null;
+                        var img = window.splBestImage(item);
                         var artists = (item.artists && item.artists.items) ? item.artists.items.map(function(a) { return a.profile && a.profile.name; }).filter(Boolean) : [];
                         rawAlbums.push({ id: uri, name: name, image: img, type: 'Album', artists: artists, browsable: true });
                     });
@@ -382,7 +419,7 @@ object AndroidAuto {
                         var uri = item.uri || (item.id ? 'spotify:playlist:' + item.id : '');
                         if (!uri) return;
                         var name = item.name || item.title || 'Playlist';
-                        var img = (item.images && item.images.items && item.images.items[0] && item.images.items[0].sources && item.images.items[0].sources[0] && item.images.items[0].sources[0].url) || (item.images && item.images[0] && item.images[0].url) || null;
+                        var img = window.splBestImage(item);
                         var owner = (item.ownerV2 && item.ownerV2.data && item.ownerV2.data.name) || (item.owner && item.owner.name) || '';
                         rawPlaylists.push({ id: uri, name: name, image: img, type: 'Playlist', artists: owner ? [owner] : [], browsable: true });
                     });
@@ -394,7 +431,7 @@ object AndroidAuto {
                         var uri = item.uri || (item.id ? 'spotify:artist:' + item.id : '');
                         if (!uri) return;
                         var name = (item.profile && item.profile.name) || item.name || 'Artist';
-                        var img = (item.visuals && item.visuals.avatarImage && item.visuals.avatarImage.sources && item.visuals.avatarImage.sources[0] && item.visuals.avatarImage.sources[0].url) || (item.images && item.images[0] && item.images[0].url) || null;
+                        var img = window.splBestImage(item);
                         rawArtists.push({ id: uri, name: name, image: img, type: 'Artist', artists: [], browsable: true });
                     });
 
@@ -407,9 +444,10 @@ object AndroidAuto {
                     rawPlaylists.slice(3).forEach(pushItem);
                     rawArtists.slice(2).forEach(pushItem);
 
-                    AndBridge.onSearchCompleted(query, JSON.stringify(results));
+                    if(!options.native)AndBridge.onSearchCompleted(query, JSON.stringify(results));
                     return results;
                 } catch (e) {
+                    if(options.native)throw e;
                     console.error('Search error for ' + query, e);
                     AndBridge.onSearchCompleted(query, '[]');
                     return [];

@@ -24,7 +24,7 @@ android {
         }
 
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters += if (providers.gradleProperty("uiTestAbi").orNull == "x86_64") listOf("x86_64") else listOf("arm64-v8a", "armeabi-v7a")
         }
     }
 

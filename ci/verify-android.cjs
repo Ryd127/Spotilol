@@ -64,7 +64,7 @@ assert.equal(probe.qaCards.fromAnchor(overlay).title,'My playlist','Overlay lost
 assert.equal(probe.qaCards.fromAnchor(other.children[0]).image,'https://i.scdn.co/image/wrong','Neighbouring cover mixed');
 assert.equal(probe.qaCards.allowedPath('/intl-es-419/playlist/Good'),'/playlist/Good');
 const gradle=fs.readFileSync(path.join(root,'app/build.gradle.kts'),'utf8');
-assert(gradle.includes('applicationId = "com.project.lol"')&&gradle.includes('versionCode = 47'));
+assert(gradle.includes('applicationId = if (vivoIsland) "com.spotify.music" else "com.project.lol"')&&gradle.includes('versionCode = 48'));
 const manifest=fs.readFileSync(path.join(root,'app/src/main/AndroidManifest.xml'),'utf8');
 assert(manifest.includes('android:authorities="${applicationId}.artwork"')&&!manifest.includes('com.spotify.mobile.android.mediaapi'));
 const host=fs.readFileSync(path.join(source,'webview/WebViewHost.kt'),'utf8');
@@ -91,9 +91,17 @@ assert(chrome.includes('val start = currentFraction()')&&chrome.includes('dragPx
 assert(chrome.includes('detectTapGestures { }'), 'Revealed background must not receive taps through the sheet');
 assert(shell.includes('PlayerSheetPolicy.artworkSideDp')&&shell.includes('.verticalScroll(rememberScrollState())'),
  'Expanded player needs bounded artwork and scroll access on short/large-text screens');
-assert(shell.includes('Triple(track.title, track.artist, track.duration)')&&shell.includes('key(seekIdentity)')&&
- shell.includes('currentIdentity.value == seekIdentity')&&shell.includes('enabled = track.duration > 0L'),
+const seek=fs.readFileSync(path.join(source,'ui/components/NativeSeekControls.kt'),'utf8');
+assert(seek.includes('Triple(track.title, track.artist, track.duration)')&&seek.includes('key(seekIdentity)')&&
+ seek.includes('currentIdentity.value == seekIdentity')&&seek.includes('enabled = track.duration > 0L'),
  'A stale or unknown-duration seek must not dispatch');
 assert(shell.includes('clearAndSetSemantics')&&shell.includes('paneTitle = "Сейчас играет"'),
  'Background semantics must be hidden while the player pane is open');
+assert(shell.includes('Modifier.fillMaxSize().background(bg).background('),'Expanded player requires an opaque base');
+assert(!activity.includes('Открыть Native UI'),'Internal pilot terminology must not appear on the launch screen');
+const splash=fs.readFileSync(path.join(source,'ui/SplashActivity.kt'),'utf8');
+assert(!splash.includes('delay(SPLASH_MIN_MS)'),'Do not reintroduce the forced four-second launch delay');
+assert(!fs.readFileSync(path.join(source,'webview/injections/AndroidTracker.kt'),'utf8').includes('ab67616d000082c1'),
+ 'Never invent a replacement artwork CDN key');
+require('node:child_process').execFileSync(process.execPath,[path.join(__dirname,'verify-native-data.cjs')],{stdio:'inherit'});
 console.log('PASS: '+checked+' embedded scripts; metadata pacing/seek/restart/artwork; native play/navigation; independent package/provider; guarded bridge and transport.');

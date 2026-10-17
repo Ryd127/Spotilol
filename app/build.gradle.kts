@@ -12,6 +12,9 @@ val keystoreProperties = Properties().apply {
         keystorePropertiesFile.inputStream().use { load(it) }
     }
 }
+val vivoIsland = providers.gradleProperty("vivoIsland").orNull == "true"
+val uiTestAbi = providers.gradleProperty("uiTestAbi").orNull
+require(uiTestAbi == null || uiTestAbi == "x86_64") { "Only the isolated x86_64 UI-test override is supported" }
 
 
 android {
@@ -19,13 +22,15 @@ android {
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.project.lol"
+        applicationId = if (vivoIsland) "com.spotify.music" else "com.project.lol"
         minSdk = 28
         targetSdk = 36
-        versionCode = 47
-        versionName = "1.2.4-native17"
+        versionCode = 48
+        versionName = if (vivoIsland) "1.2.4-native18-vivo" else "1.2.4-native18"
+        manifestPlaceholders["spotilolAppLabel"] = if (vivoIsland) "Spotilol Vivo" else "@string/app_name"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            abiFilters += if (uiTestAbi == "x86_64") listOf("x86_64") else listOf("arm64-v8a", "armeabi-v7a")
         }
     }
 
@@ -110,6 +115,11 @@ dependencies {
     implementation(libs.activity.compose)
     implementation(libs.lifecycle.runtime.compose)
     debugImplementation(libs.compose.ui.tooling)
+    androidTestImplementation(platform(libs.compose.bom))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.3.0")
+    androidTestImplementation("androidx.test:runner:1.7.0")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 
     // Glance (home screen widgets)
     implementation(libs.glance.appwidget)

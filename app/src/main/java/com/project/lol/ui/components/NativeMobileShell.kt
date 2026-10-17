@@ -1,8 +1,6 @@
 package com.project.lol.ui.components
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.util.LruCache
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.LinearEasing
@@ -45,6 +43,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.ProvideTextStyle
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -79,9 +80,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import compose.icons.TablerIcons
 import compose.icons.tablericons.Home
@@ -101,8 +100,6 @@ import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Repeat
 import compose.icons.tablericons.User
 import compose.icons.tablericons.Camera
-import java.net.HttpURLConnection
-import java.net.URL
 
 private val green = Color(0xFF1ED760)
 private val bg = Color(0xFF121212)
@@ -138,6 +135,7 @@ data class MobileBrowseState(
     val library: List<MobileBrowseItem> = emptyList(),
     val sections: List<MobileSection> = emptyList(),
     val loadingLibrary: Boolean = false,
+    val loadingPage: Boolean = false,
     val error: String = ""
 ) {
     companion object {
@@ -169,45 +167,20 @@ data class MobileBrowseState(
                 library = itemsFrom(o.optJSONArray("library"), 220),
                 sections = shelves,
                 loadingLibrary = o.optBoolean("loadingLibrary"),
+                loadingPage = o.optBoolean("loadingPage", !o.optBoolean("ready", false)),
                 error = o.optString("error", "")
             )
         }
     }
 }
 
-private object ArtCache {
-    private val cache = LruCache<String, Bitmap>(48)
-    suspend fun load(url: String): Bitmap? = withContext(Dispatchers.IO) {
-        if (!url.startsWith("https://") || url.length > 850) return@withContext null
-        val uri = runCatching { URL(url) }.getOrNull() ?: return@withContext null
-        val host = uri.host.lowercase(java.util.Locale.ROOT)
-        if (!(host == "scdn.co" || host.endsWith(".scdn.co") ||
-                host == "spotifycdn.com" || host.endsWith(".spotifycdn.com")))
-            return@withContext null
-        cache.get(url)?.let { return@withContext it }
-        var conn: HttpURLConnection? = null
-        try {
-            conn = (uri.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 3500
-                readTimeout = 3500
-                instanceFollowRedirects = false
-            }
-            if (conn.responseCode != 200 || conn.contentLengthLong > 3_000_000L) return@withContext null
-            val opt = BitmapFactory.Options().apply { inSampleSize = 2 }
-            val bitmap = conn.inputStream.use { BitmapFactory.decodeStream(it, null, opt) }
-            if (bitmap != null) cache.put(url, bitmap)
-            bitmap
-        } catch (_: Exception) { null }
-        finally { conn?.disconnect() }
-    }
-}
 @Composable
 private fun Cover(
     url: String, modifier: Modifier = Modifier,
     round: Boolean = false, isLiked: Boolean = false
 ) {
     val bitmap by produceState<Bitmap?>(null, url, isLiked) {
-        value = if (isLiked) null else ArtCache.load(url)
+        value = if (isLiked) null else NativeArtwork.load(url)
     }
     val shape = if (round) CircleShape else RoundedCornerShape(5.dp)
     Box(modifier.clip(shape).background(Color(0xFF303030)), contentAlignment = Alignment.Center) {
@@ -237,7 +210,7 @@ private fun artworkFor(item: MobileBrowseItem, library: List<MobileBrowseItem>):
 }
 @Composable
 private fun CoverTone(url: String): Color {
-    val art by produceState<Bitmap?>(null, url) { value = ArtCache.load(url) }
+    val art by produceState<Bitmap?>(null, url) { value = NativeArtwork.load(url) }
     return remember(art) {
         if (art == null) Color(0xFF47313D)
         else runCatching {
@@ -280,7 +253,7 @@ private fun ToolIcon(
 }
 @Composable
 private fun Avatar(onClick: () -> Unit) {
-    Box(Modifier.size(39.dp).clip(CircleShape).background(Color(0xFFFF673D))
+    Box(Modifier.size(32.dp).clip(CircleShape).background(Color(0xFFFF673D))
         .clickable(onClick = onClick),
         contentAlignment = Alignment.Center) {
         Icon(TablerIcons.User, contentDescription = "Профиль", tint = Color(0xFF151515), modifier = Modifier.size(24.dp))
@@ -315,7 +288,7 @@ private fun NativeTransportBar(
     Box(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) {
         Box(Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(8.dp)).background(tone)
             .testTag("native-transport-bar")) {
-            Row(Modifier.fillMaxSize().clickable(role = Role.Button, onClick = onOpen)
+            Row(Modifier.fillMaxSize().testTag("native-mini-open").clickable(role = Role.Button, onClick = onOpen)
                 .padding(start = 8.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                 Cover(track.cover, Modifier.size(40.dp).clip(RoundedCornerShape(4.dp)))
                 Column(Modifier.weight(1f).padding(start = 12.dp, end = 4.dp)) {
@@ -328,9 +301,9 @@ private fun NativeTransportBar(
                         fontSize = 13.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 ToolIcon(TablerIcons.Heart, "Нравится", onFavorite, if(track.favorite) green else white, 23)
-                ToolIcon(if(track.playing) TablerIcons.PlayerPause else TablerIcons.PlayerPlay,
+                ToolIcon(if(track.playing) NativeIcons.Pause else NativeIcons.Play,
                     "Пауза или воспроизведение", onToggle, white, 26)
-                ToolIcon(TablerIcons.PlayerSkipForward, "Следующий трек", onNext, white, 26)
+                ToolIcon(NativeIcons.Next, "Следующий трек", onNext, white, 26)
             }
             // Track identity creates a fresh visual anchor; a seek never sweeps through the song.
             key(track.title, track.artist, track.duration) {
@@ -354,7 +327,8 @@ private fun clock(ms: Long): String {
     val secs = (ms.coerceAtLeast(0) / 1000).toInt()
     return (secs / 60).toString() + ":" + (secs % 60).toString().padStart(2, '0')
 }
-private fun playable(item: MobileBrowseItem): Boolean = item.kind == "track" || item.path.startsWith("/track/")
+private fun playable(item: MobileBrowseItem): Boolean = item.kind == "track" || item.kind == "episode" ||
+    item.path.startsWith("/track/") || item.path.startsWith("/episode/")
 
 @Composable
 fun NativeMobileShell(
@@ -370,17 +344,28 @@ fun NativeMobileShell(
     onShuffle: () -> Unit,
     onRepeat: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenWeb: () -> Unit
+    onOpenWeb: () -> Unit,
+    onRetry: () -> Unit = {}
 ) {
     var tab by rememberSaveable { mutableStateOf("Home") }
     var search by rememberSaveable { mutableStateOf("") }
     var filter by rememberSaveable { mutableStateOf("Все") }
     var libraryFilter by rememberSaveable { mutableStateOf("") }
     var nowPlaying by rememberSaveable { mutableStateOf(false) }
-    var previousPath by remember { mutableStateOf("/") }
-    val detail = (browse.path.startsWith("/playlist/") || browse.path.startsWith("/album/") ||
-        browse.path.startsWith("/artist/") || browse.path.startsWith("/show/") ||
-        browse.path.startsWith("/collection/"))
+    var backPaths by rememberSaveable { mutableStateOf(listOf<String>()) }
+    var startedContext by rememberSaveable { mutableStateOf("") }
+    var expectedPath by rememberSaveable { mutableStateOf(browse.path) }
+    var userNavigated by remember { mutableStateOf(false) }
+    fun navigateTo(path: String) { userNavigated = true; expectedPath = path; onNavigate(path) }
+    fun goBack() {
+        val target = backPaths.lastOrNull() ?: "/"
+        backPaths = backPaths.dropLast(1)
+        navigateTo(target)
+    }
+    LaunchedEffect(browse.path) { if (!userNavigated) expectedPath = browse.path }
+    val detail = (expectedPath.startsWith("/playlist/") || expectedPath.startsWith("/album/") ||
+        expectedPath.startsWith("/artist/") || expectedPath.startsWith("/show/") ||
+        expectedPath.startsWith("/collection/"))
     val isBrowse = !detail
     val tone = CoverTone(track.cover)
 
@@ -391,32 +376,35 @@ fun NativeMobileShell(
                 val context = when {
                     browse.path.startsWith("/album/") -> "spotify:album:" + browse.path.substringAfterLast("/")
                     browse.path.startsWith("/playlist/") -> "spotify:playlist:" + browse.path.substringAfterLast("/")
+                    browse.path.startsWith("/artist/") -> "spotify:artist:" + browse.path.substringAfterLast("/")
                     browse.path == "/collection/tracks" -> "spotify:collection:tracks"
                     else -> ""
                 }
-                onPlay("spotify:track:" + id, context)
+                startedContext = browse.path
+                onPlay("spotify:" + (if (item.kind == "episode") "episode:" else "track:") + id, context)
             }
         } else {
-            previousPath = browse.path
-            onNavigate(item.path)
+            backPaths = backPaths + expectedPath
+            navigateTo(item.path)
         }
     }
 
     LaunchedEffect(search, tab) {
         if (tab == "Search") {
             delay(420)
-            onNavigate(if (search.isBlank()) "/search"
+            navigateTo(if (search.isBlank()) "/search"
                 else "/search/" + java.net.URLEncoder.encode(search.trim(), "UTF-8").replace("+", "%20"))
         }
     }
     BackHandler(enabled = nowPlaying || detail || tab != "Home") {
         when {
             nowPlaying -> nowPlaying = false
-            detail -> onNavigate(previousPath)
-            else -> { tab = "Home"; onNavigate("/") }
+            detail -> goBack()
+            else -> { tab = "Home"; navigateTo("/") }
         }
     }
 
+    ProvideTextStyle(LocalTextStyle.current.copy(fontFamily = FontFamily.SansSerif)) {
     Box(Modifier.fillMaxSize().background(bg)) {
         Column(Modifier.fillMaxSize().then(
             if (nowPlaying) Modifier.clearAndSetSemantics { } else Modifier
@@ -425,7 +413,7 @@ fun NativeMobileShell(
                 detail -> {
                     Row(Modifier.fillMaxWidth().padding(start = 14.dp, top = 7.dp, end = 14.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        ToolIcon(TablerIcons.ArrowLeft, "Назад", { onNavigate(previousPath) })
+                        ToolIcon(TablerIcons.ArrowLeft, "Назад", { goBack() })
                         Spacer(Modifier.weight(1f))
                         ToolIcon(TablerIcons.DotsVertical, "Дополнительно", onOpenWeb)
                     }
@@ -459,7 +447,7 @@ fun NativeMobileShell(
                         BasicTextField(value = search, onValueChange = { search = it.take(120) },
                             singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(
                                 color = Color(0xFF171717), fontSize = 16.sp, fontWeight = FontWeight.SemiBold
-                            ), modifier = Modifier.weight(1f),
+                            ), modifier = Modifier.weight(1f).testTag("native-search-input"),
                             decorationBox = { inner ->
                                 Box {
                                     if (search.isBlank()) Text("Что хочешь послушать?",
@@ -476,9 +464,9 @@ fun NativeMobileShell(
                         verticalAlignment = Alignment.CenterVertically) {
                         Avatar(onOpenSettings)
                         Spacer(Modifier.width(14.dp))
-                        Text("Моя медиатека", color = white, fontSize = 26.sp,
+                        Text("Моя медиатека", color = white, fontSize = 23.sp,
                             fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        ToolIcon(TablerIcons.Search, "Поиск", { tab = "Search"; onNavigate("/search") })
+                        ToolIcon(TablerIcons.Search, "Поиск", { tab = "Search"; navigateTo("/search") })
                         ToolIcon(TablerIcons.Plus, "Создать", onOpenWeb)
                     }
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
@@ -492,13 +480,16 @@ fun NativeMobileShell(
             }
 
             // A screen transition changes only the native visuals. Playback remains in WebView.
-            Crossfade(
-                targetState = tab + "|" + browse.path,
-                animationSpec = tween(200), label = "mobilePage",
+            NativePageFrame(
+                pageKey = tab + "|" + expectedPath,
                 modifier = Modifier.weight(1f).fillMaxWidth()
-            ) { page ->
+            ) {
+                val page = tab + "|" + expectedPath
                 val pageTag = Modifier.fillMaxWidth().testTag(page)
                 when {
+                    browse.path != expectedPath || (!browse.ready && browse.items.isEmpty() && browse.library.isEmpty()) -> {
+                        BrowseFeedback(loading = true, error = false, onRetry = onRetry)
+                    }
                     detail -> {
                         val artUrl = browse.cover.ifBlank { browse.library.firstOrNull { it.path == browse.path }?.image.orEmpty() }
                         val detailTone = CoverTone(artUrl)
@@ -508,9 +499,12 @@ fun NativeMobileShell(
                                     Brush.verticalGradient(listOf(detailTone.copy(alpha = .80f), bg))
                                 ).padding(horizontal = 17.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                                     Spacer(Modifier.height(8.dp))
-                                    Cover(artUrl, Modifier.size(235.dp), isLiked = browse.path == "/collection/tracks")
+                                    Cover(artUrl, if (browse.path.startsWith("/artist/"))
+                                        Modifier.fillMaxWidth().aspectRatio(1.5f) else Modifier.size(235.dp),
+                                        isLiked = browse.path == "/collection/tracks")
                                     Spacer(Modifier.height(19.dp))
-                                    Text(browse.title.ifBlank { "Плейлист" }, color = white, fontSize = 26.sp,
+                                    Text(browse.title.ifBlank { if (browse.loadingPage) "Загрузка…" else "" }, color = white,
+                                        fontSize = if (browse.path.startsWith("/artist/")) 32.sp else 26.sp,
                                         fontWeight = FontWeight.ExtraBold, modifier = Modifier.fillMaxWidth())
                                     Spacer(Modifier.height(7.dp))
                                     if (browse.creator.isNotBlank()) {
@@ -530,12 +524,24 @@ fun NativeMobileShell(
                                         Spacer(Modifier.weight(1f))
                                         ToolIcon(TablerIcons.ArrowsSort, "Перемешать", onOpenWeb, grey)
                                         Box(Modifier.size(55.dp).clip(CircleShape).background(green)
-                                            .clickable { onToggle() }, contentAlignment = Alignment.Center) {
-                                            Icon(if(track.playing) TablerIcons.PlayerPause else TablerIcons.PlayerPlay,
+                                            .clickable {
+                                                if (startedContext == browse.path && track.title.isNotBlank()) onToggle()
+                                                else browse.items.firstOrNull(::playable)?.let(::clickItem)
+                                            }, contentAlignment = Alignment.Center) {
+                                            Icon(if(track.playing && startedContext == browse.path) NativeIcons.Pause else NativeIcons.Play,
                                                 "Воспроизвести", modifier = Modifier.size(29.dp), tint = Color.Black)
                                         }
                                     }
                                 }
+                            }
+                            if (browse.loadingPage || browse.error.isNotBlank()) {
+                                item { BrowseFeedback(browse.loadingPage, browse.error.isNotBlank(), onRetry) }
+                            } else if (browse.items.isEmpty()) {
+                                item { Text("Пока нет доступных треков", color = grey, modifier = Modifier.padding(20.dp)) }
+                            }
+                            if (browse.path.startsWith("/artist/") && browse.items.isNotEmpty()) {
+                                item { Text("Популярные", color = white, fontSize = 21.sp, fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) }
                             }
                             items(browse.items, key = { it.path + it.title }) { item ->
                                 TrackRow(item, { clickItem(item) }, onOpenWeb)
@@ -659,6 +665,11 @@ fun NativeMobileShell(
                                     }
                                 }
                             } else {
+                                if (browse.loadingPage || browse.error.isNotBlank()) {
+                                    item { BrowseFeedback(browse.loadingPage, browse.error.isNotBlank(), onRetry) }
+                                } else if (browse.items.isEmpty()) {
+                                    item { Text("Ничего не найдено", color = grey, modifier = Modifier.padding(16.dp)) }
+                                }
                                 items(browse.items, key = { it.path + it.title }) { item ->
                                     TrackRow(item, { clickItem(item) }, onOpenWeb)
                                 }
@@ -666,7 +677,7 @@ fun NativeMobileShell(
                         }
                     }
                     else -> {
-                        val shortcuts = browse.items.filter { !playable(it) }.take(8)
+                        val shortcuts = browse.items.filter { it.kind !in listOf("genre", "section", "user") }.take(8)
                             .ifEmpty { browse.library.take(8) }
                         val browseSections = browse.sections
                         LazyColumn(modifier = pageTag,
@@ -717,15 +728,15 @@ fun NativeMobileShell(
                 verticalAlignment = Alignment.CenterVertically) {
                 listOf("Главная","Поиск","Моя медиатека","Создать").forEachIndexed { index, label ->
                     val icon = when(index) { 0 -> TablerIcons.Home; 1 -> TablerIcons.Search;
-                        2 -> TablerIcons.Playlist; else -> TablerIcons.Plus }
+                        2 -> NativeIcons.Library; else -> TablerIcons.Plus }
                     val selected = (index == 0 && tab == "Home") ||
                         (index == 1 && tab == "Search") ||
                         (index == 2 && tab == "Library")
                     Column(Modifier.weight(1f).clickable {
                         when (index) {
-                            0 -> { tab = "Home"; onNavigate("/") }
-                            1 -> { tab = "Search"; onNavigate("/search") }
-                            2 -> { tab = "Library"; onNavigate("/") }
+                            0 -> { tab = "Home"; navigateTo("/") }
+                            1 -> { tab = "Search"; navigateTo("/search") }
+                            2 -> { tab = "Library"; navigateTo("/") }
                             else -> onOpenWeb()
                         }
                     }, horizontalAlignment = Alignment.CenterHorizontally) {
@@ -740,7 +751,7 @@ fun NativeMobileShell(
         }
 
         NativePlayerSheet(visible = nowPlaying, onDismiss = { nowPlaying = false }) { closePlayer, dragHandle ->
-            BoxWithConstraints(Modifier.fillMaxSize().background(
+            BoxWithConstraints(Modifier.fillMaxSize().background(bg).background(
                 Brush.verticalGradient(listOf(tone, tone.copy(alpha = .5f), Color(0xFF171018)))
             ).semantics { paneTitle = "Сейчас играет"; isTraversalGroup = true }) {
                 val fontScale = LocalDensity.current.fontScale
@@ -783,46 +794,23 @@ fun NativeMobileShell(
                         ToolIcon(TablerIcons.Heart, "Добавить в медиатеку", onFavorite, if(track.favorite) green else white, 27)
                     }
                     Spacer(Modifier.height(18.dp))
-                    val seekIdentity = Triple(track.title, track.artist, track.duration)
-                    val currentIdentity = rememberUpdatedState(seekIdentity)
-                    key(seekIdentity) {
-                        // Recreate the pointer/keyboard session when the displayed track changes.
-                        var seeking by remember { mutableStateOf<Float?>(null) }
-                        Slider(value = seeking ?: progress(track), enabled = track.duration > 0L,
-                            onValueChange = { seeking = it },
-                            onValueChangeFinished = {
-                                if (currentIdentity.value == seekIdentity && track.duration > 0L) {
-                                    seeking?.let { onSeek(PlayerSheetPolicy.seekPosition(track.duration, it)) }
-                                }
-                                seeking = null
-                            },
-                            colors = SliderDefaults.colors(thumbColor = white,
-                                activeTrackColor = white, inactiveTrackColor = white.copy(alpha = .4f)),
-                            modifier = Modifier.fillMaxWidth())
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            val displayedPosition = seeking?.let {
-                                PlayerSheetPolicy.seekPosition(track.duration, it)
-                            } ?: track.position
-                            Text(clock(displayedPosition), color = grey, fontSize = 11.sp)
-                            Text(clock(track.duration), color = grey, fontSize = 11.sp)
-                        }
-                    }
+                    NativeSeekControls(track, onSeek)
                     Spacer(Modifier.height(20.dp))
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
                         .widthIn(min = contentWidth),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
                         ToolIcon(TablerIcons.ArrowsSort, "Перемешать", onShuffle, if(track.shuffle) green else white, 26)
-                        ToolIcon(TablerIcons.PlayerSkipBack, "Предыдущий", onPrevious, white, 32)
+                        ToolIcon(NativeIcons.Previous, "Предыдущий", onPrevious, white, 28)
                         val playInteractions = remember { MutableInteractionSource() }
                         Box(Modifier.size(68.dp).nativePressScale(playInteractions).clip(CircleShape).background(white)
                             .clickable(interactionSource = playInteractions, indication = null,
                                 role = Role.Button, onClick = onToggle), contentAlignment = Alignment.Center) {
-                            Icon(if(track.playing) TablerIcons.PlayerPause else TablerIcons.PlayerPlay,
+                            Icon(if(track.playing) NativeIcons.Pause else NativeIcons.Play,
                                 "Пауза или воспроизведение", tint = Color.Black,
                                 modifier = Modifier.size(34.dp))
                         }
-                        ToolIcon(TablerIcons.PlayerSkipForward, "Следующий", onNext, white, 32)
+                        ToolIcon(NativeIcons.Next, "Следующий", onNext, white, 28)
                         ToolIcon(TablerIcons.Repeat, "Повтор", onRepeat, if(track.repeat != "false") green else white, 26)
                     }
                     Spacer(Modifier.height(20.dp))
@@ -837,6 +825,20 @@ fun NativeMobileShell(
             }
         }
     }
+    }
+}
+
+@Composable
+private fun BrowseFeedback(loading: Boolean, error: Boolean, onRetry: () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        if (loading) {
+            CircularProgressIndicator(Modifier.size(24.dp), color = green, strokeWidth = 2.dp)
+            Spacer(Modifier.height(12.dp))
+        }
+        Text(if (error) "Не удалось загрузить. Проверь соединение." else "Загружаем музыку…", color = grey, fontSize = 14.sp)
+        if (error && !loading) Text("Повторить", color = green, fontWeight = FontWeight.Bold,
+            modifier = Modifier.clickable(onClick = onRetry).padding(16.dp))
+    }
 }
 
 @Composable
@@ -844,7 +846,7 @@ private fun TrackRow(item: MobileBrowseItem, onClick: () -> Unit, onMore: () -> 
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick)
         .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
-        Cover(item.image, Modifier.size(54.dp), item.kind == "artist")
+        Cover(item.image, Modifier.size(48.dp), item.kind == "artist")
         Column(Modifier.weight(1f).padding(start = 13.dp)) {
             Text(item.title, color = white, fontSize = 15.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
@@ -856,9 +858,9 @@ private fun TrackRow(item: MobileBrowseItem, onClick: () -> Unit, onMore: () -> 
 }
 @Composable
 private fun LibraryRow(item: MobileBrowseItem, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().height(73.dp).clickable(onClick = onClick),
+    Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).clickable(onClick = onClick),
         verticalAlignment = Alignment.CenterVertically) {
-        Cover(item.image, Modifier.size(59.dp), item.kind == "artist",
+        Cover(item.image, Modifier.size(56.dp), item.kind == "artist",
             isLiked = item.path == "/collection/tracks")
         Column(Modifier.weight(1f).padding(start = 13.dp)) {
             Text(item.title, color = white, fontSize = 16.sp, maxLines = 1,

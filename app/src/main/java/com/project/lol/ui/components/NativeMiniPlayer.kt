@@ -1,8 +1,6 @@
 package com.project.lol.ui.components
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.util.LruCache
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -38,10 +36,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import java.net.HttpURLConnection
-import java.net.URL
 
 /** Display state only. The existing Spotify Web/MediaSession engine retains playback ownership. */
 data class NativeMiniTrack(
@@ -56,38 +50,6 @@ data class NativeMiniTrack(
     val repeat: String = "false"
 )
 
-private object MiniArtwork {
-    private val cache = LruCache<String, Bitmap>(20)
-
-    suspend fun get(url: String): Bitmap? = withContext(Dispatchers.IO) {
-        if (url.isEmpty() || url.length > 800) return@withContext null
-        val uri = runCatching { URL(url) }.getOrNull() ?: return@withContext null
-        val host = uri.host.lowercase(java.util.Locale.ROOT)
-        if (uri.protocol != "https" || !(host == "scdn.co" || host.endsWith(".scdn.co") ||
-                host == "spotifycdn.com" || host.endsWith(".spotifycdn.com")))
-            return@withContext null
-        cache.get(url)?.let { return@withContext it }
-        var connection: HttpURLConnection? = null
-        try {
-            connection = (uri.openConnection() as HttpURLConnection).apply {
-                connectTimeout = 3000
-                readTimeout = 3000
-                instanceFollowRedirects = false
-            }
-            if (connection.responseCode != 200) return@withContext null
-            if (connection.contentLengthLong > 2_500_000L) return@withContext null
-            val options = BitmapFactory.Options().apply { inSampleSize = 4 }
-            val bitmap = connection.inputStream.use { BitmapFactory.decodeStream(it, null, options) }
-            if (bitmap != null) cache.put(url, bitmap)
-            bitmap
-        } catch (_: Exception) {
-            null
-        } finally {
-            connection?.disconnect()
-        }
-    }
-}
-
 @Composable
 fun NativeMiniPlayer(
     track: NativeMiniTrack,
@@ -97,7 +59,7 @@ fun NativeMiniPlayer(
     modifier: Modifier = Modifier
 ) {
     val bitmap by produceState<Bitmap?>(initialValue = null, key1 = track.cover) {
-        value = MiniArtwork.get(track.cover)
+        value = NativeArtwork.load(track.cover)
     }
     val image = remember(bitmap) { bitmap?.asImageBitmap() }
     val fraction = if (track.duration > 0L)

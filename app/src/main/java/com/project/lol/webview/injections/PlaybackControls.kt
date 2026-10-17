@@ -382,7 +382,19 @@ object PlaybackControls {
             };
             window.actSeek = function(pos) {
                 var rg = document.querySelector('div[data-testid=playback-progressbar] input[type=range]');
-                if(rg) { rg.value=pos+1; rg.dispatchEvent(new Event('change',{bubbles:true})); }
+                pos=Number(pos);
+                if(!rg||!Number.isFinite(pos)||rg.disabled)return false;
+                var max=Number(rg.max||rg.getAttribute('max')),min=Number(rg.min||0);
+                if(!Number.isFinite(max)||max<=min)return false;
+                var target=Math.max(min,Math.min(max,pos));
+                // Bypass React's per-element value tracker so its real input handler runs.
+                var descriptor=Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value');
+                if(!descriptor||!descriptor.set)return false;
+                descriptor.set.call(rg,String(target));
+                rg.dispatchEvent(new Event('input',{bubbles:true}));
+                rg.dispatchEvent(new Event('change',{bubbles:true}));
+                try{AndBridge.dbg('v','LAT/seek input dispatched target_ms='+Math.round(target));}catch(e){}
+                return true;
             };
 
     """

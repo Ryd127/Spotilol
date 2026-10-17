@@ -20,6 +20,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.key
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
@@ -52,6 +53,20 @@ internal fun Modifier.nativePressScale(interactions: MutableInteractionSource): 
     )
     // Read the animated value in the layer, not while composing the player tree.
     return graphicsLayer { scaleX = scale.value; scaleY = scale.value }
+}
+
+/** One page tree rather than two expensive live browser trees during a crossfade. */
+@Composable
+internal fun NativePageFrame(pageKey: String, modifier: Modifier, content: @Composable () -> Unit) {
+    val arrival = remember { Animatable(1f) }
+    LaunchedEffect(pageKey) {
+        arrival.snapTo(0f)
+        arrival.animateTo(1f, tween(180, easing = NativeChromeMotion.SurfaceEasing))
+    }
+    Box(modifier.graphicsLayer {
+        alpha = .85f + .15f * arrival.value
+        translationY = 12f * density * (1f - arrival.value)
+    }) { key(pageKey) { content() } }
 }
 
 /**

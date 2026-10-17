@@ -15,6 +15,7 @@ object LibraryParser {
                         || (data.coverArt && data.coverArt.sources && data.coverArt.sources[0] && data.coverArt.sources[0].url)
                         || (data.visuals && data.visuals.avatarImage && data.visuals.avatarImage.sources && data.visuals.avatarImage.sources[0] && data.visuals.avatarImage.sources[0].url)
                         || null;
+                    if(window.splBestImage)image=window.splBestImage(data)||image;
                     if(!uri) return;
                     if(typename.indexOf('Playlist') !== -1 || typename.indexOf('PseudoPlaylist') !== -1 || uri.indexOf(':playlist:') !== -1) {
                         if(window.splIsLikedName(name) || uri.indexOf('collection') !== -1) {

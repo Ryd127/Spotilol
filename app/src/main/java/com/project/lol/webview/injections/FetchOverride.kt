@@ -108,13 +108,19 @@ object FetchOverride {
                                         if(j && j.canonical_uri) {
                                             var tid = j.canonical_uri.replace('spotify:track:','');
                                             var cg = j.album && j.album.cover_group && j.album.cover_group.image;
+                                            var coverImage=(cg||[]).reduce(function(best,item){
+                                                var score=(Number(item.width)||0)*(Number(item.height)||0);
+                                                var old=best?(Number(best.width)||0)*(Number(best.height)||0):-1;
+                                                return item.file_id&&score>old?item:best;
+                                            },null);
+                                            var coverUrl=coverImage?'https://i.scdn.co/image/'+coverImage.file_id:null;
                                             window.__splTrackMeta = window.__splTrackMeta || {};
                                             window.__splTrackMeta[tid] = {
                                                 uri: j.canonical_uri,
                                                 name: j.name || null,
                                                 artist: (j.artist && j.artist.length) ? j.artist[0].name : null,
                                                 album: (j.album) ? j.album.name : null,
-                                                cover: (cg && cg.length) ? 'https://i.scdn.co/image/' + cg[0].file_id : null,
+                                                cover: coverUrl,
                                                 trackNumber: (typeof j.number === 'number' && j.number > 0) ? j.number : null,
                                                 discNumber: (typeof j.disc_number === 'number' && j.disc_number > 0) ? j.disc_number : null,
                                                 year: (j.album && j.album.date && j.album.date.year) ? j.album.date.year : null
@@ -128,7 +134,7 @@ object FetchOverride {
                                                 window.__curTrackName = j.name || null;
                                                 window.__curTrackArtist = (j.artist && j.artist.length) ? j.artist[0].name : null;
                                                 window.__curTrackAlbum = (j.album) ? j.album.name : null;
-                                                if(cg && cg.length) window.__curTrackCover = 'https://i.scdn.co/image/' + cg[0].file_id;
+                                                if(coverUrl) window.__curTrackCover = coverUrl;
                                                 window.lastState = null;
                                                 if(window.updMedia && typeof track !== 'undefined'){ try{ window.updMedia(); }catch(e){} }
                                             }

@@ -76,7 +76,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val MonochromeAccent = Color(0xFFE0E0E0)
-private const val SPLASH_MIN_MS = 4000L
 
 class SplashActivity : ComponentActivity() {
 
@@ -129,7 +128,6 @@ class SplashActivity : ComponentActivity() {
             var checking by remember { mutableStateOf(false) }
             var preparing by remember { mutableStateOf(false) }
             var contentAlpha by remember { mutableFloatStateOf(1f) }
-            val fastStartup = remember { prefs.getBoolean("FastStartup", false) }
             val onboardingAppear = remember { Animatable(0f) }
             var onboardingLeaving by remember { mutableStateOf(false) }
             val scope = rememberCoroutineScope()
@@ -181,7 +179,6 @@ class SplashActivity : ComponentActivity() {
 
             LaunchedEffect(checkDone) {
                 if (!checkDone) return@LaunchedEffect
-                if (!fastStartup) delay(SPLASH_MIN_MS)
                 scope.launch {
                     animate(
                         initialValue = 1f,

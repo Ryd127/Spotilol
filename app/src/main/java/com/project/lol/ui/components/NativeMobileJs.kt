@@ -7,9 +7,9 @@ package com.project.lol.ui.components
 object NativeMobileJs {
     const val INSTALL = """
       (function(){
-        if(window.splNativeUiRevision==='native15')return;
-        window.splNativeUiRevision='native15';
-        var lastLibrary=null, libPending=false, libLastTry=0, knownImages=Object.create(null);
+        if(window.splNativeUiRevision==='native18')return;
+        window.splNativeUiRevision='native18';
+        var lastLibrary=null, libPending=false, libLastTry=0, knownImages=Object.create(null),memoLibSource=null,memoLibItems=[];
         function clean(s,n){return String(s||'').replace(/\s+/g,' ').trim().slice(0,n||170);}
         function allowedPath(h){
           try{
@@ -19,6 +19,59 @@ object NativeMobileJs {
             return p==='/'||/^\/(track|album|playlist|artist|show|episode|collection|genre|section|search|user)(\/|$)/.test(p)?p:'';
           }catch(e){return '';}
         }
+        // Native page identity is independent from the hidden WebView's current DOM.
+        // Never label arbitrary sidebar/recommendation links as an artist's tracks.
+        var routePath=allowedPath(location.href)||'/', pages=new Map(), requestSeq=0, activeRequest=null;
+        function uriFor(path){
+          var m=path.match(/^\/(artist|album|playlist|show)\/([A-Za-z0-9]+)$/);
+          if(m)return 'spotify:'+m[1]+':'+m[2];
+          return path==='/collection/tracks'?'spotify:collection:tracks':'';
+        }
+        function mediaItem(value){
+          var uri=clean(value.id||value.uri,120),m=uri.match(/^spotify:(track|episode|album|playlist|artist|show):([A-Za-z0-9]+)$/);
+          if(!m)return null;
+          var title=clean(value.name||value.title,160);
+          if(!title)return null;
+          return {path:'/'+m[1]+'/'+m[2],title:title,kind:m[1],
+            subtitle:clean((value.artists||[]).join(', '),140),image:clean(value.image,800)};
+        }
+        function loadPage(path,force){
+          var search=path.indexOf('/search/')===0,uri=uriFor(path);
+          if(!search&&!uri)return false;
+          var fetcher=search?window.searchMediaItems:window.fetchMediaItems;
+          if(typeof fetcher!=='function')return false;
+          var old=pages.get(path),now=Date.now();
+          if(!force&&old&&(old.loading||now-old.at<30000))return true;
+          if(activeRequest&&activeRequest.controller)activeRequest.controller.abort();
+          var seq=++requestSeq,controller=typeof AbortController==='function'?new AbortController():null;
+          var page={loading:true,items:old&&old.items||[],details:old&&old.details||{},error:'',at:now};
+          pages.set(path,page);
+          while(pages.size>12)pages.delete(pages.keys().next().value);
+          activeRequest={path:path,controller:controller};
+          var timer=setTimeout(function(){
+            if(seq!==requestSeq)return;
+            if(controller)controller.abort();
+            page.loading=false;page.error='timeout';page.at=Date.now();
+          },8000);
+          var argument=uri;
+          if(search){try{argument=decodeURIComponent(path.slice(8));}catch(e){argument=path.slice(8);}}
+          Promise.resolve().then(function(){return fetcher(argument,{native:true,signal:controller&&controller.signal});})
+            .then(function(result){
+              if(seq!==requestSeq||page.error==='timeout')return;
+              var values=search?result:result&&result.items;
+              var seen=Object.create(null);
+              page.items=(values||[]).slice(0,140).map(mediaItem).filter(function(item){
+                if(!item||seen[item.path])return false;seen[item.path]=true;
+                return search||item.kind==='track'||item.kind==='episode';
+              });
+              page.details=search?{}:result&&result.details||{};
+              page.loading=false;page.at=Date.now();
+            }).catch(function(error){
+              if(seq!==requestSeq)return;
+              page.loading=false;page.error=error&&error.name==='AbortError'?'cancelled':'unavailable';page.at=Date.now();
+            }).then(function(){clearTimeout(timer);if(seq===requestSeq)activeRequest=null;});
+          return true;
+        }
         function image(el){
           if(!el)return '';
           // Spotify Web uses both IMG tags and CSS backgrounds for browse tiles.
@@ -26,6 +79,7 @@ object NativeMobileJs {
           var nodes=el.matches&&el.matches('img,source')?[el]:el.querySelectorAll('img,source');
           function normalize(value){
             value=clean(value,800);
+            if(/(equaliz|placeholder|favicon|playing[-_.])/i.test(value))return '';
             if(/^spotify:image:[0-9a-f]{32,}$/i.test(value))
               return 'https://i.scdn.co/image/'+value.slice(14);
             if(!/^https:\/\//i.test(value))return '';
@@ -36,14 +90,18 @@ object NativeMobileJs {
             }catch(e){}
             return '';
           }
+          var best='',bestRank=-1;
+          function consider(url,rank){var valid=normalize(url);if(valid&&rank>bestRank){best=valid;bestRank=rank;}}
           for(var i=0;i<nodes.length&&i<12;i++){
             var node=nodes[i];
-            var src=normalize(node.currentSrc||node.getAttribute('src')||node.getAttribute('data-src')||node.src);
-            if(src)return src;
+            consider(node.currentSrc||node.getAttribute('src')||node.getAttribute('data-src')||node.src,Number(node.naturalWidth)||0);
             var srcset=node.getAttribute('srcset')||node.getAttribute('data-srcset')||'';
-            var match=srcset.match(/https:\/\/[^,\s]+/);
-            if(match&&(src=normalize(match[0])))return src;
+            srcset.split(',').forEach(function(candidate){
+              var match=candidate.trim().match(/^(https:\/\/\S+)(?:\s+(\d+(?:\.\d+)?)(w|x))?$/);
+              if(match)consider(match[1],Number(match[2]||1)*(match[3]==='x'?1000:1));
+            });
           }
+          if(best)return best;
           var elements=[el];
           if(el.querySelectorAll){
             var styled=el.querySelectorAll('[style*="background"],[data-testid*="image"],[class*="image"],[class*="Image"]');
@@ -167,8 +225,9 @@ object NativeMobileJs {
           return result;
         }
         function library(){
-          var items=[],seen={},lib=lastLibrary||window.mediaLib||null;
+          var items=[],seen={},lib=window.mediaLib||lastLibrary||null;
           if(!lib)return items;
+          if(lib===memoLibSource)return memoLibItems;
           ['playlists','albums','artists','podcasts'].forEach(function(category){
             var values=lib[category]||[];
             for(var i=0;i<values.length&&items.length<200;i++){
@@ -186,28 +245,39 @@ object NativeMobileJs {
                 image:cover,kind:p==='/collection/tracks'?'collection':p.split('/')[1]});
             }
           });
-          return items;
+          memoLibSource=lib;memoLibItems=items;return items;
         }
         window.splNativeLoadLibrary=function(){
           if(libPending||Date.now()-libLastTry<20000)return;
-          if(typeof window.fetchAllLibrary!=='function'||typeof window.parseLibrary!=='function')return;
+          if(typeof window.checkMediaLib!=='function'&&(typeof window.fetchAllLibrary!=='function'||typeof window.parseLibrary!=='function'))return;
           libPending=true;
           libLastTry=Date.now();
-          Promise.resolve().then(function(){return window.fetchAllLibrary();})
-            .then(function(raw){lastLibrary=window.parseLibrary(raw);})
+          Promise.resolve().then(function(){
+              if(typeof window.checkMediaLib==='function')return window.checkMediaLib().then(function(){return window.mediaLib;});
+              return window.fetchAllLibrary().then(window.parseLibrary);
+            })
+            .then(function(lib){lastLibrary=lib;})
             .catch(function(){lastLibrary=null;})
             .then(function(){libPending=false;});
         };
         window.splNativeSnapshot=function(){
-          var root=document.querySelector('main')||document.getElementById('main-view')||document.body;
-          if(!root)return null;
-          var path=allowedPath(location.href)||'/';
+          var root=document.querySelector('[data-testid="main-view-container"]')||document.querySelector('main')||document.getElementById('main-view');
+          var path=routePath;
           var lib=library();
           if(!lib.length&&!libPending)window.splNativeLoadLibrary();
           // Prefer exact Spotify entity artwork over blank/lazy web tiles.
           for(var l=0;l<lib.length;l++){
             if(lib[l].image)knownImages[lib[l].path]=lib[l].image;
           }
+          loadPage(path,false);
+          var page=pages.get(path),entity=lib.find(function(item){return item.path===path;});
+          if(page){
+            var details=page.details||{};
+            return JSON.stringify({ready:true,path:path,title:clean(details.name||(entity&&entity.title),145),
+              cover:clean(details.image||(entity&&entity.image),800),creator:clean(details.creator,100),meta:'',
+              items:page.items,library:lib,sections:[],loadingLibrary:libPending,loadingPage:page.loading,error:page.error});
+          }
+          if(!root)return JSON.stringify({ready:false,path:path,items:[],library:lib,loadingPage:true,error:''});
           var h=root.querySelector('h1');
           var owner=root.querySelector('[data-testid="creator-link"],[data-testid="playlist-owner"],[data-testid="entity-subtitle"] a[href*="/user/"]');
           var creator=clean(owner&&owner.textContent,100);
@@ -223,7 +293,7 @@ object NativeMobileJs {
             return items;
           }
           enrich(rows);enrich(cards);
-          var showRows=(path.startsWith('/album/')||path.startsWith('/playlist/')||path.startsWith('/collection/'));
+          var showRows=!!uriFor(path);
           var firstCover='';
           var mainCover=root.querySelector('[data-testid="entity-image"],[data-testid="playlist-image"],main header img,main h1 + img');
           if(mainCover)firstCover=image(mainCover);
@@ -238,25 +308,39 @@ object NativeMobileJs {
                      document.querySelector('a[href="/collection/tracks"]')),
             path:path,title:clean(h&&h.textContent,145),
             cover:firstCover,creator:creator,meta:meta,
-            items:showRows&&rows.length?rows:cards,
+            items:showRows?rows:cards,
             library:lib,
             sections:path==='/'?sections(root).map(function(group){
               group.items=enrich(group.items);return group;
             }):[],
-            loadingLibrary:libPending,error:''
+            loadingLibrary:libPending,loadingPage:showRows,error:''
           });
         };
         window.splNativeNavigate=function(path){
           if(typeof path!=='string'||path.length>350)return false;
           if(path!=='/'&&!/^\/(album|playlist|artist|show|episode|collection|genre|section|search|user)(\/|$)/.test(path))return false;
-          if(location.pathname===path)return true;
+          if(allowedPath(path)!==path)return false;
+          if(activeRequest&&activeRequest.path!==path){
+            requestSeq++;if(activeRequest.controller)activeRequest.controller.abort();
+            var pending=pages.get(activeRequest.path);if(pending&&pending.loading)pages.delete(activeRequest.path);
+            activeRequest=null;
+          }
+          routePath=path;
+          if(loadPage(path,false))return true;
+          if(allowedPath(location.href)===path)return true;
           history.pushState({},'',path);
           window.dispatchEvent(new PopStateEvent('popstate',{state:null}));
           return true;
         };
+        window.splNativeCurrentPath=function(){return routePath;};
+        window.splNativeRetry=function(){return loadPage(routePath,true);};
+        window.splNativeRevealWeb=function(){
+          if(allowedPath(location.href)!==routePath){history.pushState({},'',routePath);window.dispatchEvent(new PopStateEvent('popstate',{state:null}));}
+          return true;
+        };
         window.splNativePlay=function(uri,context){
-          if(!/^spotify:track:[A-Za-z0-9]{15,30}$/.test(uri))return false;
-          if(context&&!/^spotify:(album|playlist|collection):[A-Za-z0-9:]+$/.test(context))context='';
+          if(!/^spotify:(track|episode):[A-Za-z0-9]{15,30}$/.test(uri))return false;
+          if(context&&!/^spotify:(album|playlist|artist|collection):[A-Za-z0-9:]+$/.test(context))context='';
           if(typeof window.playFromUri!=='function')return false;
           window.playFromUri(uri,context||undefined);
           return true;

@@ -22,15 +22,13 @@ object AndroidTracker {
                     var rg = document.querySelector('div[data-testid=playback-progressbar] input[type=range]');
                     if(rg) { duration=parseInt(rg.getAttribute('max')); position=parseInt(rg.getAttribute('value')); }
                     else { duration=null; position=null; }
-                    var im = document.querySelector('img[data-testid=cover-art-image]');
+                    var href=ta&&(ta.getAttribute('href')||''),idMatch=href&&href.match(/\/track\/([A-Za-z0-9]+)/);
+                    var currentMeta=idMatch&&window.__splTrackMeta&&window.__splTrackMeta[idMatch[1]];
+                    var im = document.querySelector('[data-testid="now-playing-widget"] img[data-testid="cover-art-image"]')||
+                        document.querySelector('aside[data-testid="now-playing-bar"] img[data-testid="cover-art-image"]');
                     if(im) {
-                        var s=im.src;
-                        if(s.indexOf('i.scdn.co')!==-1) {
-                            s=s.replace(/ab67616d0000[0-9a-f]{4}/,'ab67616d000082c1');
-                            s=s.replace(/ab6761670000[0-9a-f]{4}/,'ab676167000082e8');
-                        }
-                        cover=s;
-                    } else cover=null;
+                        cover=(currentMeta&&currentMeta.cover)||im.currentSrc||im.src;
+                    } else cover=(currentMeta&&currentMeta.cover)||null;
                     if(typeof window.splTraceSnapshot==='function')
                         window.splTraceSnapshot(track,position,playing);
                     updMedia();

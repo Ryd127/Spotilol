@@ -20,8 +20,22 @@ env:
 
 jobs:
   build:
+    name: Build (${{ matrix.variant }})
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: standard
+            vivo: 'false'
+            application_id: com.project.lol
+          - variant: vivo
+            vivo: 'true'
+            application_id: com.spotify.music
+    env:
+      ORG_GRADLE_PROJECT_vivoIsland: ${{ matrix.vivo }}
+      SPOTILOL_EXPECTED_APP_ID: ${{ matrix.application_id }}
 
     steps:
       - name: Checkout sources
@@ -272,7 +286,7 @@ jobs:
               target_sdk="$(apkanalyzer manifest target-sdk "$apk" | tr -d '\r\n')"
               debuggable="$(apkanalyzer manifest debuggable "$apk" | tr -d '\r\n' | tr '[:upper:]' '[:lower:]')"
               echo "APK identity: id=${app_id} version=${version_name}(${version_code}) minSdk=${min_sdk} targetSdk=${target_sdk} debuggable=${debuggable}"
-              [[ "$app_id" == "com.project.lol" ]]
+              [[ "$app_id" == "${SPOTILOL_EXPECTED_APP_ID}" ]]
               [[ "$version_name" == "$expected_version_name" ]]
               [[ "$version_code" == "$expected_version_code" ]]
               [[ "$min_sdk" == "28" ]]
@@ -388,7 +402,7 @@ jobs:
         if: steps.prepare_release.outcome == 'success'
         uses: actions/upload-artifact@v7
         with:
-          name: Spotilol-release-${{ github.run_number }}-${{ github.run_attempt }}
+          name: Spotilol-release-${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.variant }}
           if-no-files-found: error
           retention-days: 30
           path: |
@@ -398,7 +412,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: spotilol-ci-diagnostics-${{ github.run_number }}-${{ github.run_attempt }}
+          name: spotilol-ci-diagnostics-${{ github.run_number }}-${{ github.run_attempt }}-${{ matrix.variant }}
           if-no-files-found: warn
           retention-days: 14
           path: |
@@ -439,10 +453,69 @@ jobs:
           fi
 
 
+  ui_regression:
+    name: Android UI regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ORG_GRADLE_PROJECT_uiTestAbi: x86_64
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+      - name: Install UI-test toolchain and headless emulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager --install "platform-tools" "emulator" "platforms;android-37.0" \
+            "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1" \
+            "system-images;android-35;google_apis;x86_64"
+          echo "sdk.dir=${ANDROID_SDK_ROOT}" > local.properties
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          echo no | avdmanager create avd --force --name spotilol_ui --package "system-images;android-35;google_apis;x86_64" --device pixel_7
+          nohup "${ANDROID_SDK_ROOT}/emulator/emulator" -avd spotilol_ui -no-window -no-audio \
+            -no-boot-anim -no-snapshot -gpu swiftshader_indirect > ui-emulator.log 2>&1 &
+          timeout 240 adb wait-for-device
+          timeout 240 bash -c 'until [[ "$(adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r")" == 1 ]]; do sleep 2; done'
+          adb shell input keyevent 82
+      - name: Execute rendered Compose and launcher scenarios
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --stacktrace --console=plain :app:connectedDebugAndroidTest 2>&1 | tee ui-tests.log
+      - name: Collect UI screenshots and diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p ui-screenshots
+          adb pull /sdcard/Android/data/com.project.lol/files/ui-regression ui-screenshots/ || true
+          adb logcat -d -t 1500 > ui-logcat.txt || true
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: Spotilol-ui-regression-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            ui-screenshots/
+            ui-tests.log
+            ui-logcat.txt
+            ui-emulator.log
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+
   publish_release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, ui_regression]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -457,7 +530,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          artifact_name="Spotilol-release-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          artifact_name="Spotilol-release-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-standard"
           mkdir -p release-package
           gh run download "${GITHUB_RUN_ID}" \
             --repo "${GITHUB_REPOSITORY}" \
