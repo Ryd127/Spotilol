@@ -76,6 +76,8 @@ async function run(){
  liked.state.splLikedName=()=> 'Wrong hidden-page heading';
  liked.state.splNativeNavigate('/collection/tracks');await turns();
  assert.equal(JSON.parse(liked.state.splNativeSnapshot()).title,'Saved favorites','Liked Songs borrowed the hidden web page title');
+ liked.state.splNativeInvalidateLibrary(song.uri);
+ assert.equal(liked.state.likedSongsCache,null,'Saved/removed tracks left the Liked Songs response cache stale');
  // Deliberately ignore abort in this fixture: even an uncancellable late result cannot win.
  const race=environment();let releaseA;
  const regular=race.state.mngFetch;

@@ -339,12 +339,19 @@ object NativeMobileJs {
         };
         window.splNativeCurrentPath=function(){return routePath;};
         window.splNativeRetry=function(){return loadPage(routePath,true);};
+        function invalidatePage(path){
+          pages.delete(path);
+          if(activeRequest&&activeRequest.path===path){
+            requestSeq++;if(activeRequest.controller)activeRequest.controller.abort();activeRequest=null;
+          }
+        }
         window.splNativeInvalidatePage=function(uri){
           var m=String(uri||'').match(/^spotify:(playlist|album|artist|show):([A-Za-z0-9]+)${'$'}/);
-          if(m)pages.delete('/'+m[1]+'/'+m[2]);
+          if(m)invalidatePage('/'+m[1]+'/'+m[2]);
         };
         window.splNativeInvalidateLibrary=function(uri){
-          memoLibSource=null;libLastTry=0;pages.delete('/collection/tracks');
+          memoLibSource=null;libLastTry=0;invalidatePage('/collection/tracks');
+          if(/^spotify:track:/.test(String(uri||'')))window.likedSongsCache=null;
           window.splNativeInvalidatePage(uri);window.splNativeLoadLibrary(true);
         };
         window.splNativeRevealWeb=function(explicit){

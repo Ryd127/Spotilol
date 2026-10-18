@@ -297,7 +297,7 @@ private fun NativeTransportBar(
                     "Пауза или воспроизведение", onToggle, white, 26)
             }
             // Track identity creates a fresh visual anchor; a seek never sweeps through the song.
-            key(track.title, track.artist, track.duration) {
+            key(track.uri, track.title, track.artist, track.duration) {
                 val previous = remember { longArrayOf(track.position) }
                 val millis = remember(track.position, track.playing) {
                     PlayerSheetPolicy.progressAnimationMillis(previous[0], track.position, track.playing)

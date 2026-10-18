@@ -40,7 +40,7 @@ import kotlin.math.abs
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun NativeSeekControls(track: NativeMiniTrack, onSeek: (Long) -> Unit) {
-    val seekIdentity = Triple(track.title, track.artist, track.duration)
+    val seekIdentity = Pair(track.uri, Triple(track.title, track.artist, track.duration))
     val currentIdentity = rememberUpdatedState(seekIdentity)
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     key(seekIdentity) {

@@ -53,7 +53,7 @@ class NativeUiRegressionTest {
     @get:Rule val rule = createAndroidComposeRule<ComponentActivity>()
     private val artistArt = "https://i.scdn.co/image/fixture-artist"
     private val albumArt = "https://i.scdn.co/image/fixture-album"
-    private val artist = MobileBrowseItem("/artist/ArtistA", "Artist A", "Исполнитель", image = artistArt, kind = "artist")
+    private val artist = MobileBrowseItem("/artist/5234567890123456789012", "Artist A", "Исполнитель", image = artistArt, kind = "artist")
     private val song = MobileBrowseItem("/track/1234567890123456789012", "Real song", "Artist A", image = albumArt, kind = "track")
     private val track = NativeMiniTrack(title = "Test track", artist = "Test artist", cover = albumArt, position = 60000,
         duration = 180000, playing = true)
@@ -306,9 +306,11 @@ class NativeUiRegressionTest {
         rule.runOnIdle {
             assertEquals(1, requests.size)
             assertTrue(requests.single() in 110000L..160000L)
-            current = track.copy(title = "Another track", duration = 120000L, position = 0L)
+            // Same display text and duration, different recording: URI must reset the seek preview.
+            current = track.copy(uri = "spotify:track:2234567890123456789012", position = 0L)
         }
         rule.waitForIdle()
+        rule.onNodeWithText("0:00").assertIsDisplayed()
         rule.runOnIdle { assertEquals(1, requests.size) }
     }
 

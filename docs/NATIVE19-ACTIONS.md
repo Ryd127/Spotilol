@@ -41,7 +41,9 @@ Spotify's identical transition implementation.
   Creating a destination inside the picker returns to the picker for explicit selection;
   it does not silently run two non-idempotent mutations.
 - Library refresh invalidations coalesce behind an in-flight request; a late read cannot
-  reverse a later confirmed save. A leftover guessed artwork URL rewrite was removed.
+  reverse a later confirmed save. Liked Songs' response cache is cleared after a save/remove.
+  URI identity also resets seek previews and mini-player progress when two recordings
+  have identical displayed metadata. A leftover guessed artwork URL rewrite was removed.
 - Music/Podcast Home filters now filter actual content, including fallback shelves.
   The unsupported decorative Clips chip and search camera were removed.
 

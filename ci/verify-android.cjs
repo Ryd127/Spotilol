@@ -26,6 +26,13 @@ state.now=1860;state.position=25000;state.updMedia();assert.equal(calls.at(-1)[1
 state.now=1870;state.position=0;state.updMedia();assert.equal(calls.at(-1)[0],'status','Restart did not refresh metadata');
 const count=calls.length;state.now=1880;state.position=10;state.updMedia();assert.equal(calls.length,count,'Restart loop floods status');
 state.cover='https://i.scdn.co/image/new';state.updMedia();assert.equal(calls.at(-1)[1].cover,state.cover,'New cover suppressed');
+state.splTrackId='1234567890123456789012';state.updMedia();const identityCount=calls.length;
+state.splTrackId='2234567890123456789012';state.updMedia();
+assert.equal(calls.length,identityCount+1,'Different tracks with identical text lost their identity');
+assert.equal(calls.at(-1)[1].uri,'spotify:track:2234567890123456789012');
+state.document.querySelector=selector=>selector.includes('/episode/')?{getAttribute:()=>'/episode/3234567890123456789012'}:null;
+state.updMedia();assert.equal(calls.at(-1)[1].uri,'spotify:episode:3234567890123456789012');
+assert.equal(state.splUpCoverUrl('https://i.scdn.co/image/ab67616d00001e02exact'),'https://i.scdn.co/image/ab67616d00001e02exact','A guessed CDN rewrite returned');
 const native={window:null,URL,Map,Set,WeakMap,Array,Promise,Date,
  location:{origin:'https://open.spotify.com',href:'https://open.spotify.com/',pathname:'/'},
  document:{querySelector:()=>null,querySelectorAll:()=>[]},history:{pushState:(a,b,p)=>native.navigated=p},
