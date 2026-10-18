@@ -4,7 +4,7 @@ object MediaUpdater {
     const val CONTENT = """
             window.splUpCoverUrl = function(url){
                 if(!url) return null;
-                return url.replace(/ab67616d0000[0-9a-f]{4}/i, 'ab67616d0000b273');
+                return url;
             };
 
             window.splPlayingTrackId = function(){
@@ -17,6 +17,13 @@ object MediaUpdater {
                     if(document.querySelector('a[data-testid="context-item-info-show"]')) return null;
                     return window.splTrackId || window.__curTrackId || null;
                 }catch(e){ return null; }
+            };
+
+            window.splPlayingMediaUri = function(){
+                var link=document.querySelector('[data-testid="now-playing-widget"] a[href*="/track/"], [data-testid="now-playing-widget"] a[href*="/episode/"]');
+                var match=link&&String(link.getAttribute('href')||'').match(/\/(track|episode)\/([A-Za-z0-9]{22})(?:[/?#]|${'$'})/);
+                if(match)return 'spotify:'+match[1]+':'+match[2];
+                var id=window.splPlayingTrackId();return id?'spotify:track:'+id:'';
             };
 
             window.splMergeTrackMeta = function(id, patch){
@@ -145,10 +152,13 @@ object MediaUpdater {
                 lastPos = position;
                 if(restart) lastState = null;
 
-                var currState=track+'|'+artist+'|'+playing+'|'+repmode+'|'+isfav+'|'+shuffle+'|'+album+'|'+duration+'|'+cover;
+                var mediaUri=window.splPlayingMediaUri();
+                var confirmedSaved=typeof window.splNativeSavedState==='function'?window.splNativeSavedState(mediaUri):null;
+                if(typeof confirmedSaved==='boolean')isfav=confirmedSaved;
+                var currState=mediaUri+'|'+track+'|'+artist+'|'+playing+'|'+repmode+'|'+isfav+'|'+shuffle+'|'+album+'|'+duration+'|'+cover;
                 if(currState!==lastState) {
                     lastState=currState;
-                    var values={artist:artist,track:track,album:album,playing:playing,repeat:repmode,fav:isfav,shuffle:shuffle,duration:duration,position:position,cover:cover};
+                    var values={uri:mediaUri,artist:artist,track:track,album:album,playing:playing,repeat:repmode,fav:isfav,shuffle:shuffle,duration:duration,position:position,cover:cover};
                     AndBridge.recMediaStatus(JSON.stringify(values));
                     window.__splLastPositionSentAt=Date.now();
                 } else {

@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.project.lol.ui.components
 
 import android.graphics.Bitmap
@@ -11,6 +12,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
@@ -83,23 +86,12 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import org.json.JSONObject
 import compose.icons.TablerIcons
-import compose.icons.tablericons.Home
-import compose.icons.tablericons.Search
 import compose.icons.tablericons.Playlist
-import compose.icons.tablericons.Plus
-import compose.icons.tablericons.PlayerPlay
-import compose.icons.tablericons.PlayerPause
-import compose.icons.tablericons.PlayerSkipBack
-import compose.icons.tablericons.PlayerSkipForward
-import compose.icons.tablericons.Heart
 import compose.icons.tablericons.ArrowLeft
 import compose.icons.tablericons.ChevronDown
-import compose.icons.tablericons.DotsVertical
 import compose.icons.tablericons.Download
-import compose.icons.tablericons.ArrowsSort
 import compose.icons.tablericons.Repeat
 import compose.icons.tablericons.User
-import compose.icons.tablericons.Camera
 
 private val green = Color(0xFF1ED760)
 private val bg = Color(0xFF121212)
@@ -175,7 +167,7 @@ data class MobileBrowseState(
 }
 
 @Composable
-private fun Cover(
+internal fun Cover(
     url: String, modifier: Modifier = Modifier,
     round: Boolean = false, isLiked: Boolean = false
 ) {
@@ -282,7 +274,7 @@ private fun progress(track: NativeMiniTrack): Float =
 @Composable
 private fun NativeTransportBar(
     track: NativeMiniTrack, tone: Color, onOpen: () -> Unit,
-    onFavorite: () -> Unit, onToggle: () -> Unit, onNext: () -> Unit
+    actions: NativeLibraryActions, item: MobileBrowseItem, onToggle: () -> Unit
 ) {
     val height = PlayerSheetPolicy.miniHeightDp(LocalDensity.current.fontScale).dp
     Box(Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 8.dp)) {
@@ -300,10 +292,9 @@ private fun NativeTransportBar(
                     Text(track.artist, color = white.copy(alpha = .70f), fontFamily = FontFamily.SansSerif,
                         fontSize = 13.sp, lineHeight = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
-                ToolIcon(TablerIcons.Heart, "Нравится", onFavorite, if(track.favorite) green else white, 23)
+                NativeSaveButton(actions, item, track.favorite)
                 ToolIcon(if(track.playing) NativeIcons.Pause else NativeIcons.Play,
                     "Пауза или воспроизведение", onToggle, white, 26)
-                ToolIcon(NativeIcons.Next, "Следующий трек", onNext, white, 26)
             }
             // Track identity creates a fresh visual anchor; a seek never sweeps through the song.
             key(track.title, track.artist, track.duration) {
@@ -345,7 +336,9 @@ fun NativeMobileShell(
     onRepeat: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenWeb: () -> Unit,
-    onRetry: () -> Unit = {}
+    onRetry: () -> Unit = {},
+    onAction: (NativeActionRequest, (NativeActionReply) -> Unit) -> Unit = { _, result -> result(NativeActionReply()) },
+    onOpenWebTarget: (String) -> Unit = { onOpenWeb() }
 ) {
     var tab by rememberSaveable { mutableStateOf("Home") }
     var search by rememberSaveable { mutableStateOf("") }
@@ -368,6 +361,19 @@ fun NativeMobileShell(
         expectedPath.startsWith("/collection/"))
     val isBrowse = !detail
     val tone = CoverTone(track.cover)
+    val actions = rememberNativeLibraryActions(onAction)
+    val playingItem = MobileBrowseItem(
+        path = if (mediaUri(track.uri).isBlank()) "" else "/" + track.uri.substringAfter(':').replace(':', '/'),
+        title = track.title, subtitle = track.artist, image = track.cover,
+        kind = if (track.uri.startsWith("spotify:episode:")) "episode" else "track")
+    val pageItem = MobileBrowseItem(browse.path, browse.title, browse.creator, browse.cover,
+        kind = browse.path.split('/').getOrNull(1).orEmpty())
+    LaunchedEffect(track.uri) { if (track.uri.isNotBlank()) actions.readSaved(playingItem) }
+    LaunchedEffect(browse.path) { if (mediaUri(browse.path).isNotBlank()) actions.readSaved(pageItem) }
+    fun showMenu(item: MobileBrowseItem) {
+        val uri = mediaUri(item.path)
+        actions.menu(item, browse.library.any { it.path == item.path } || (uri == track.uri && track.favorite))
+    }
 
     fun clickItem(item: MobileBrowseItem) {
         if (playable(item)) {
@@ -415,7 +421,7 @@ fun NativeMobileShell(
                         verticalAlignment = Alignment.CenterVertically) {
                         ToolIcon(TablerIcons.ArrowLeft, "Назад", { goBack() })
                         Spacer(Modifier.weight(1f))
-                        ToolIcon(TablerIcons.DotsVertical, "Дополнительно", onOpenWeb)
+                        ToolIcon(NativeIcons.More, "Дополнительно", { showMenu(pageItem) })
                     }
                 }
                 tab == "Home" -> {
@@ -425,7 +431,7 @@ fun NativeMobileShell(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Avatar(onOpenSettings)
                         Spacer(Modifier.width(4.dp))
-                        listOf("Все","Клипы","Музыка","Подкасты").forEach { name ->
+                        listOf("Все","Музыка","Подкасты").forEach { name ->
                             Pill(name, name == filter) { filter = name }
                         }
                     }
@@ -437,12 +443,11 @@ fun NativeMobileShell(
                         Spacer(Modifier.width(16.dp))
                         Text("Поиск", modifier = Modifier.weight(1f),
                             fontSize = 27.sp, fontWeight = FontWeight.Bold, color = white)
-                        ToolIcon(TablerIcons.Camera, "Камера и дополнительные функции", onOpenWeb)
                     }
                     Row(Modifier.padding(horizontal = 17.dp).fillMaxWidth().height(52.dp)
                         .clip(RoundedCornerShape(5.dp)).background(white).padding(horizontal = 13.dp),
                         verticalAlignment = Alignment.CenterVertically) {
-                        Icon(TablerIcons.Search, null, tint = Color.Black, modifier = Modifier.size(28.dp))
+                        Icon(NativeIcons.Search, null, tint = Color.Black, modifier = Modifier.size(24.dp))
                         Spacer(Modifier.width(10.dp))
                         BasicTextField(value = search, onValueChange = { search = it.take(120) },
                             singleLine = true, textStyle = androidx.compose.ui.text.TextStyle(
@@ -466,8 +471,8 @@ fun NativeMobileShell(
                         Spacer(Modifier.width(14.dp))
                         Text("Моя медиатека", color = white, fontSize = 23.sp,
                             fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                        ToolIcon(TablerIcons.Search, "Поиск", { tab = "Search"; navigateTo("/search") })
-                        ToolIcon(TablerIcons.Plus, "Создать", onOpenWeb)
+                        ToolIcon(NativeIcons.Search, "Поиск", { tab = "Search"; navigateTo("/search") })
+                        ToolIcon(NativeIcons.Plus, "Создать", { actions.createMenu() })
                     }
                     Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState())
                         .padding(horizontal = 17.dp, vertical = 15.dp),
@@ -518,11 +523,13 @@ fun NativeMobileShell(
                                     }, color = grey, modifier = Modifier.fillMaxWidth(), fontSize = 13.sp)
                                     Spacer(Modifier.height(15.dp))
                                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                        ToolIcon(TablerIcons.Heart, "Добавить в медиатеку", onOpenWeb, grey)
-                                        ToolIcon(TablerIcons.Download, "Скачать", onOpenWeb, grey)
-                                        ToolIcon(TablerIcons.DotsVertical, "Меню", onOpenWeb, grey)
+                                        if (mediaUri(browse.path).isNotBlank()) NativeSaveButton(actions, pageItem,
+                                            fallback = browse.library.any { it.path == browse.path })
+                                        if (browse.path.startsWith("/album/") || browse.path.startsWith("/playlist/") || browse.path == "/collection/tracks")
+                                            ToolIcon(TablerIcons.Download, "Загрузить через веб-плеер", { onOpenWebTarget(browse.path) }, grey)
+                                        ToolIcon(NativeIcons.More, "Меню", { showMenu(pageItem) }, grey)
                                         Spacer(Modifier.weight(1f))
-                                        ToolIcon(TablerIcons.ArrowsSort, "Перемешать", onOpenWeb, grey)
+                                        ToolIcon(NativeIcons.Shuffle, "Перемешать", onShuffle, if (track.shuffle) green else grey)
                                         Box(Modifier.size(55.dp).clip(CircleShape).background(green)
                                             .clickable {
                                                 if (startedContext == browse.path && track.title.isNotBlank()) onToggle()
@@ -544,7 +551,7 @@ fun NativeMobileShell(
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) }
                             }
                             items(browse.items, key = { it.path + it.title }) { item ->
-                                TrackRow(item, { clickItem(item) }, onOpenWeb)
+                                TrackRow(item, { clickItem(item) }, { showMenu(item) })
                             }
                         }
                     }
@@ -565,7 +572,7 @@ fun NativeMobileShell(
                                 item { Text("Загружаем медиатеку…", color = grey,
                                     modifier = Modifier.padding(14.dp)) }
                             }
-                            items(rows, key = { it.path }) { item -> LibraryRow(item) { clickItem(item) } }
+                            items(rows, key = { it.path }) { item -> LibraryRow(item, { showMenu(item) }) { clickItem(item) } }
                         }
                     }
                     tab == "Search" -> {
@@ -671,25 +678,31 @@ fun NativeMobileShell(
                                     item { Text("Ничего не найдено", color = grey, modifier = Modifier.padding(16.dp)) }
                                 }
                                 items(browse.items, key = { it.path + it.title }) { item ->
-                                    TrackRow(item, { clickItem(item) }, onOpenWeb)
+                                    TrackRow(item, { clickItem(item) }, { showMenu(item) })
                                 }
                             }
                         }
                     }
                     else -> {
-                        val shortcuts = browse.items.filter { it.kind !in listOf("genre", "section", "user") }.take(8)
-                            .ifEmpty { browse.library.take(8) }
-                        val browseSections = browse.sections
+                        fun matchesFilter(item: MobileBrowseItem) = when (filter) {
+                            "Подкасты" -> item.kind in listOf("show", "episode")
+                            "Музыка" -> item.kind in listOf("track", "artist", "album", "playlist", "collection")
+                            else -> true
+                        }
+                        val shortcuts = browse.items.filter { it.kind !in listOf("genre", "section", "user") && matchesFilter(it) }.take(8)
+                            .ifEmpty { browse.library.filter(::matchesFilter).take(8) }
+                        val browseSections = browse.sections.map { it.copy(items = it.items.filter(::matchesFilter)) }.filter { it.items.isNotEmpty() }
                         LazyColumn(modifier = pageTag,
                             contentPadding = PaddingValues(start = 16.dp, bottom = 20.dp)) {
-                            if (filter == "Все" || filter == "Музыка") {
+                            if (shortcuts.isNotEmpty()) {
                                 items(shortcuts.chunked(2)) { pair ->
                                     Row(Modifier.fillMaxWidth().padding(end = 16.dp, bottom = 8.dp),
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         pair.forEach { item ->
                                             Row(Modifier.weight(1f).height(57.dp)
                                                 .clip(RoundedCornerShape(7.dp))
-                                                .background(Color(0xFF292929)).clickable { clickItem(item) },
+                                                .background(Color(0xFF292929)).combinedClickable(
+                                                    onClick = { clickItem(item) }, onLongClick = { showMenu(item) }),
                                                 verticalAlignment = Alignment.CenterVertically) {
                                                 Cover(artworkFor(item, browse.library), Modifier.size(57.dp),
                                                     isLiked = item.path == "/collection/tracks")
@@ -703,15 +716,19 @@ fun NativeMobileShell(
                                     }
                                 }
                             }
-                            if (browseSections.isEmpty() && shortcuts.isNotEmpty()) {
-                                item { Shelf("Рекомендуем тебе", browse.items.drop(8).take(15),
-                                    library = browse.library, onClick = { clickItem(it) }) }
+                            val fallbackShelf = browse.items.filter(::matchesFilter)
+                                .filter { candidate -> shortcuts.none { it.path == candidate.path } }.take(15)
+                            if (browseSections.isEmpty() && fallbackShelf.isNotEmpty()) {
+                                item { Shelf("Рекомендуем тебе", fallbackShelf,
+                                    library = browse.library, onClick = { clickItem(it) }, onMore = { showMenu(it) }) }
                             }
                             items(browseSections) { section ->
                                 Shelf(section.title, section.items,
-                                    library = browse.library, onClick = { clickItem(it) })
+                                    library = browse.library, onClick = { clickItem(it) }, onMore = { showMenu(it) })
                             }
-                            if (browse.items.isEmpty() && browse.library.isEmpty()) {
+                            if (filter != "Все" && shortcuts.isEmpty() && browseSections.isEmpty()) {
+                                item { Text("В этой подборке пока нет такого контента", color = grey, modifier = Modifier.padding(22.dp)) }
+                            } else if (browse.items.isEmpty() && browse.library.isEmpty()) {
                                 item { Text("Подгружаем рекомендации…",
                                     color = grey, modifier = Modifier.padding(22.dp)) }
                             }
@@ -721,27 +738,30 @@ fun NativeMobileShell(
             }
 
             if (track.title.isNotBlank()) {
-                NativeTransportBar(track, tone, { nowPlaying = true }, onFavorite, onToggle, onNext)
+                NativeTransportBar(track, tone, { nowPlaying = true }, actions, playingItem, onToggle)
             }
             Row(Modifier.fillMaxWidth().height(62.dp).background(Color(0xFF101010)),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically) {
                 listOf("Главная","Поиск","Моя медиатека","Создать").forEachIndexed { index, label ->
-                    val icon = when(index) { 0 -> TablerIcons.Home; 1 -> TablerIcons.Search;
-                        2 -> NativeIcons.Library; else -> TablerIcons.Plus }
                     val selected = (index == 0 && tab == "Home") ||
                         (index == 1 && tab == "Search") ||
-                        (index == 2 && tab == "Library")
-                    Column(Modifier.weight(1f).clickable {
+                        (index == 2 && tab == "Library") ||
+                        (index == 3 && actions.mode in listOf("create", "name") && !actions.fromPicker)
+                    val icon = when(index) { 0 -> if (selected) NativeIcons.HomeSelected else NativeIcons.Home
+                        1 -> if (selected) NativeIcons.SearchSelected else NativeIcons.Search
+                        2 -> if (selected) NativeIcons.Library else NativeIcons.LibraryOutline
+                        else -> NativeIcons.Plus }
+                    Column(Modifier.weight(1f).heightIn(min = 56.dp).testTag("native-tab-$index").selectable(selected, role = Role.Tab, onClick = {
                         when (index) {
-                            0 -> { tab = "Home"; navigateTo("/") }
-                            1 -> { tab = "Search"; navigateTo("/search") }
-                            2 -> { tab = "Library"; navigateTo("/") }
-                            else -> onOpenWeb()
+                            0 -> { backPaths = emptyList(); tab = "Home"; navigateTo("/") }
+                            1 -> { backPaths = emptyList(); tab = "Search"; navigateTo("/search") }
+                            2 -> { backPaths = emptyList(); tab = "Library"; navigateTo("/") }
+                            else -> actions.createMenu()
                         }
-                    }, horizontalAlignment = Alignment.CenterHorizontally) {
+                    }), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                         Icon(icon, label, tint = if(selected) white else grey,
-                            modifier = Modifier.size(26.dp))
+                            modifier = Modifier.size(24.dp))
                         Spacer(Modifier.height(4.dp))
                         Text(label, color = if(selected) white else grey, fontSize = 10.sp,
                             maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -774,7 +794,7 @@ fun NativeMobileShell(
                                 fontSize = 13.sp, fontWeight = FontWeight.Bold,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        ToolIcon(TablerIcons.DotsVertical, "Меню", onOpenWeb, white)
+                        ToolIcon(NativeIcons.More, "Меню", { showMenu(playingItem) }, white)
                     }
                     Spacer(Modifier.height(8.dp))
                     Box(Modifier.fillMaxWidth().then(dragHandle)) {
@@ -791,7 +811,7 @@ fun NativeMobileShell(
                             Text(track.artist, color = white.copy(alpha = .72f), fontFamily = FontFamily.SansSerif, fontSize = 15.sp,
                                 maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        ToolIcon(TablerIcons.Heart, "Добавить в медиатеку", onFavorite, if(track.favorite) green else white, 27)
+                        NativeSaveButton(actions, playingItem, track.favorite)
                     }
                     Spacer(Modifier.height(18.dp))
                     NativeSeekControls(track, onSeek)
@@ -800,7 +820,7 @@ fun NativeMobileShell(
                         .widthIn(min = contentWidth),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically) {
-                        ToolIcon(TablerIcons.ArrowsSort, "Перемешать", onShuffle, if(track.shuffle) green else white, 26)
+                        ToolIcon(NativeIcons.Shuffle, "Перемешать", onShuffle, if(track.shuffle) green else white, 26)
                         ToolIcon(NativeIcons.Previous, "Предыдущий", onPrevious, white, 28)
                         val playInteractions = remember { MutableInteractionSource() }
                         Box(Modifier.size(68.dp).nativePressScale(playInteractions).clip(CircleShape).background(white)
@@ -824,6 +844,9 @@ fun NativeMobileShell(
                 }
             }
         }
+        NativeActionMessage(actions, Modifier.align(Alignment.BottomCenter).padding(bottom = 80.dp))
+        NativeActionsSheet(actions, onCreated = { path -> backPaths = backPaths + expectedPath; navigateTo(path) },
+            onOpenWeb = onOpenWebTarget)
     }
     }
 }
@@ -843,7 +866,7 @@ private fun BrowseFeedback(loading: Boolean, error: Boolean, onRetry: () -> Unit
 
 @Composable
 private fun TrackRow(item: MobileBrowseItem, onClick: () -> Unit, onMore: () -> Unit) {
-    Row(Modifier.fillMaxWidth().clickable(onClick = onClick)
+    Row(Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onMore)
         .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically) {
         Cover(item.image, Modifier.size(48.dp), item.kind == "artist")
@@ -853,12 +876,12 @@ private fun TrackRow(item: MobileBrowseItem, onClick: () -> Unit, onMore: () -> 
             Text(item.subtitle, color = grey, fontSize = 12.sp, maxLines = 1,
                 overflow = TextOverflow.Ellipsis)
         }
-        ToolIcon(TablerIcons.DotsVertical, "Действия с треком", onMore, grey, 21)
+        ToolIcon(NativeIcons.More, "Действия с треком", onMore, grey, 21)
     }
 }
 @Composable
-private fun LibraryRow(item: MobileBrowseItem, onClick: () -> Unit) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).clickable(onClick = onClick),
+private fun LibraryRow(item: MobileBrowseItem, onMore: () -> Unit, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 68.dp).combinedClickable(onClick = onClick, onLongClick = onMore),
         verticalAlignment = Alignment.CenterVertically) {
         Cover(item.image, Modifier.size(56.dp), item.kind == "artist",
             isLiked = item.path == "/collection/tracks")
@@ -875,7 +898,8 @@ private fun LibraryRow(item: MobileBrowseItem, onClick: () -> Unit) {
 private fun Shelf(
     title: String, items: List<MobileBrowseItem>,
     library: List<MobileBrowseItem>,
-    onClick: (MobileBrowseItem) -> Unit
+    onClick: (MobileBrowseItem) -> Unit,
+    onMore: (MobileBrowseItem) -> Unit
 ) {
     if (items.isEmpty()) return
     Column(Modifier.padding(top = 31.dp, bottom = 14.dp)) {
@@ -884,7 +908,7 @@ private fun Shelf(
         LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = PaddingValues(end = 16.dp)) {
             items(items) { item ->
-                Column(Modifier.width(158.dp).clickable { onClick(item) }) {
+                Column(Modifier.width(158.dp).combinedClickable(onClick = { onClick(item) }, onLongClick = { onMore(item) })) {
                     Cover(artworkFor(item, library), Modifier.size(158.dp),
                         round = item.kind == "artist",
                         isLiked = item.path == "/collection/tracks")

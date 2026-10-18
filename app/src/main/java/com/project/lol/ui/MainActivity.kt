@@ -115,6 +115,11 @@ import com.project.lol.ui.components.NativeMiniTrack
 import com.project.lol.ui.components.MobileBrowseState
 import com.project.lol.ui.components.NativeMobileJs
 import com.project.lol.ui.components.NativeMobileShell
+import com.project.lol.ui.components.NativeActionsJs
+import com.project.lol.ui.components.NativeActionReply
+import com.project.lol.ui.components.performNativeAction
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.delay
 import com.project.lol.ui.components.SleepTimerDialog
 import com.project.lol.ui.theme.SpotifyTheme
@@ -778,7 +783,20 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
                                             nativeWebFallbackState.value = true
                                         }
                                     },
-                                    onRetry = { webView?.evaluateJavascript("window.splNativeRetry&&window.splNativeRetry()", null) }
+                                    onRetry = { webView?.evaluateJavascript("window.splNativeRetry&&window.splNativeRetry()", null) },
+                                    onAction = { request, result ->
+                                        val browser = webView
+                                        if (browser == null || !WebSecurityPolicy.isPlayer(browser.url)) result(NativeActionReply(code = "auth"))
+                                        else lifecycleScope.launch {
+                                            result(performNativeAction(browser, request) { browser === webView })
+                                            if (browser === webView) refreshNativeBrowse(browser)
+                                        }
+                                    },
+                                    onOpenWebTarget = { path ->
+                                        webView?.evaluateJavascript("window.splNativeRevealWeb&&window.splNativeRevealWeb(" + JSONObject.quote(path) + ")") {
+                                            if (it == "true") nativeWebFallbackState.value = true
+                                        }
+                                    }
                                 )
                             }
 
@@ -1443,7 +1461,10 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
                 duration = obj.optLong("duration", 0L).coerceAtLeast(0L),
                 favorite = obj.optBoolean("fav", false),
                 shuffle = obj.optBoolean("shuffle", false),
-                repeat = obj.optString("repeat", "false")
+                repeat = obj.optString("repeat", "false"),
+                uri = obj.optString("uri", "").takeIf {
+                    Regex("^spotify:(track|episode):[A-Za-z0-9]{22}$").matches(it)
+                }.orEmpty()
             )
             runOnUiThread {
                 nativeMiniTrackState.value = nativeSnapshot
@@ -1792,7 +1813,7 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
     override fun onPlayerReady(view: WebView) {
         playPendingSearch(view)
         syncNativeMiniOverlay(view)
-        view.evaluateJavascript(NativeMobileJs.INSTALL, null)
+        view.evaluateJavascript(NativeActionsJs.INSTALL + NativeMobileJs.INSTALL, null)
         nativeMobileSessionReady.value = true
         refreshNativeBrowse(view)
     }

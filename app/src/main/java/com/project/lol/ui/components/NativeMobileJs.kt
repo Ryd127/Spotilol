@@ -7,9 +7,9 @@ package com.project.lol.ui.components
 object NativeMobileJs {
     const val INSTALL = """
       (function(){
-        if(window.splNativeUiRevision==='native18')return;
-        window.splNativeUiRevision='native18';
-        var lastLibrary=null, libPending=false, libLastTry=0, knownImages=Object.create(null),memoLibSource=null,memoLibItems=[];
+        if(window.splNativeUiRevision==='native19')return;
+        window.splNativeUiRevision='native19';
+        var lastLibrary=null, libPending=false, libDirty=false, libLastTry=0, knownImages=Object.create(null),memoLibSource=null,memoLibItems=[];
         function clean(s,n){return String(s||'').replace(/\s+/g,' ').trim().slice(0,n||170);}
         function allowedPath(h){
           try{
@@ -247,18 +247,22 @@ object NativeMobileJs {
           });
           memoLibSource=lib;memoLibItems=items;return items;
         }
-        window.splNativeLoadLibrary=function(){
-          if(libPending||Date.now()-libLastTry<20000)return;
+        window.splNativeLoadLibrary=function(force){
+          if(libPending){if(force===true)libDirty=true;return;}
+          if(force!==true&&Date.now()-libLastTry<20000)return;
           if(typeof window.checkMediaLib!=='function'&&(typeof window.fetchAllLibrary!=='function'||typeof window.parseLibrary!=='function'))return;
           libPending=true;
           libLastTry=Date.now();
           Promise.resolve().then(function(){
-              if(typeof window.checkMediaLib==='function')return window.checkMediaLib().then(function(){return window.mediaLib;});
+              if(typeof window.checkMediaLib==='function')return window.checkMediaLib(force===true).then(function(){return window.mediaLib;});
               return window.fetchAllLibrary().then(window.parseLibrary);
             })
             .then(function(lib){lastLibrary=lib;})
             .catch(function(){lastLibrary=null;})
-            .then(function(){libPending=false;});
+            .then(function(){
+              libPending=false;
+              if(libDirty){libDirty=false;window.splNativeLoadLibrary(true);}
+            });
         };
         window.splNativeSnapshot=function(){
           var root=document.querySelector('[data-testid="main-view-container"]')||document.querySelector('main')||document.getElementById('main-view');
@@ -335,8 +339,18 @@ object NativeMobileJs {
         };
         window.splNativeCurrentPath=function(){return routePath;};
         window.splNativeRetry=function(){return loadPage(routePath,true);};
-        window.splNativeRevealWeb=function(){
-          if(allowedPath(location.href)!==routePath){history.pushState({},'',routePath);window.dispatchEvent(new PopStateEvent('popstate',{state:null}));}
+        window.splNativeInvalidatePage=function(uri){
+          var m=String(uri||'').match(/^spotify:(playlist|album|artist|show):([A-Za-z0-9]+)${'$'}/);
+          if(m)pages.delete('/'+m[1]+'/'+m[2]);
+        };
+        window.splNativeInvalidateLibrary=function(uri){
+          memoLibSource=null;libLastTry=0;pages.delete('/collection/tracks');
+          window.splNativeInvalidatePage(uri);window.splNativeLoadLibrary(true);
+        };
+        window.splNativeRevealWeb=function(explicit){
+          var target=typeof explicit==='string'?allowedPath(explicit):routePath;
+          if(!target)return false;
+          if(allowedPath(location.href)!==target){history.pushState({},'',target);window.dispatchEvent(new PopStateEvent('popstate',{state:null}));}
           return true;
         };
         window.splNativePlay=function(uri,context){

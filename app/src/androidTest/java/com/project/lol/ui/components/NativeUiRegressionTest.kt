@@ -19,6 +19,9 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -74,9 +77,9 @@ class NativeUiRegressionTest {
         }
     }
 
-    private fun screenshot(name: String) {
+    private fun screenshot(name: String, tag: String? = null) {
         rule.waitForIdle()
-        val bitmap = rule.onRoot().captureToImage().asAndroidBitmap()
+        val bitmap = (if (tag == null) rule.onRoot() else rule.onNodeWithTag(tag)).captureToImage().asAndroidBitmap()
         val folder = File(InstrumentationRegistry.getInstrumentation().targetContext.getExternalFilesDir(null), "ui-regression")
         check(folder.isDirectory || folder.mkdirs())
         File(folder, "$name.png").outputStream().use { check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
@@ -125,17 +128,153 @@ class NativeUiRegressionTest {
 
     @Test fun searchTypingProducesTheEncodedQuery() {
         val navigated = mutableListOf<String>()
+        var browse by mutableStateOf(MobileBrowseState(ready = true))
+        var played = ""
         rule.setContent {
             SpotifyTheme {
-                NativeMobileShell(MobileBrowseState(ready = true), track, onNavigate = { navigated.add(it) },
-                    onPlay = { _, _ -> }, onPrevious = {}, onToggle = {}, onNext = {}, onSeek = {}, onFavorite = {},
+                NativeMobileShell(browse, track, onNavigate = {
+                    navigated.add(it)
+                    browse = MobileBrowseState(ready = true, path = it, items = if (it.startsWith("/search/")) listOf(song) else emptyList())
+                },
+                    onPlay = { uri, _ -> played = uri }, onPrevious = {}, onToggle = {}, onNext = {}, onSeek = {}, onFavorite = {},
                     onShuffle = {}, onRepeat = {}, onOpenSettings = {}, onOpenWeb = {})
             }
         }
         rule.onNodeWithText("Поиск").performClick()
         rule.onNodeWithTag("native-search-input").performTextInput("Дора & test")
         rule.waitUntil(5000) { navigated.lastOrNull() == "/search/%D0%94%D0%BE%D1%80%D0%B0%20%26%20test" }
+        rule.onNodeWithText(song.title).assertIsDisplayed()
         screenshot("search-fixture")
+        rule.onNodeWithText(song.title).performClick()
+        rule.runOnIdle { assertEquals(mediaUri(song.path), played) }
+    }
+
+    @Test fun createTabUsesNativeFormAndCreatesOnlyOnceAfterAnExplicitName() {
+        val requests = mutableListOf<NativeActionRequest>()
+        var finish: ((NativeActionReply) -> Unit)? = null
+        var created = ""
+        var web = 0
+        rule.setContent { SpotifyTheme {
+            NativeMobileShell(MobileBrowseState(ready = true), track, onNavigate = { created = it },
+                onPlay = { _, _ -> }, onPrevious = {}, onToggle = {}, onNext = {}, onSeek = {}, onFavorite = {},
+                onShuffle = {}, onRepeat = {}, onOpenSettings = {}, onOpenWeb = { web++ },
+                onAction = { request, result -> requests.add(request); finish = result })
+        } }
+        rule.onNodeWithTag("native-tab-3").performClick()
+        rule.onNodeWithText("Совместный плейлист").assertIsDisplayed()
+        screenshot("create-menu-fixture", "native-actions-sheet")
+        rule.onNodeWithText("Плейлист").performClick()
+        rule.onNodeWithTag("native-playlist-name").performTextInput("My test playlist")
+        screenshot("create-name-fixture", "native-actions-sheet")
+        rule.onNodeWithText("Создать плейлист").performClick()
+        rule.runOnIdle {
+            assertEquals(1, requests.size)
+            assertEquals("createPlaylist", requests.single().kind)
+            assertEquals("My test playlist", requests.single().name)
+            assertEquals(false, requests.single().collaborative)
+            assertEquals(0, web)
+            finish!!(NativeActionReply(state = "success", uri = "spotify:playlist:1234567890123456789012"))
+        }
+        rule.waitUntil { created == "/playlist/1234567890123456789012" }
+        rule.runOnIdle { assertEquals(1, requests.size) }
+    }
+
+    @Test fun savedIndicatorRequiresConfirmationAndKeepsItsOriginalTrackTarget() {
+        lateinit var actions: NativeLibraryActions
+        val requests = mutableListOf<NativeActionRequest>()
+        val callbacks = mutableListOf<(NativeActionReply) -> Unit>()
+        var current by mutableStateOf(song)
+        rule.setContent { SpotifyTheme {
+            actions = rememberNativeLibraryActions { request, callback -> requests.add(request); callbacks.add(callback) }
+            NativeSaveButton(actions, current)
+            NativeActionsSheet(actions, {}, {})
+        } }
+        rule.onNodeWithTag("save:" + song.path).performClick().assertIsNotEnabled()
+        rule.runOnIdle {
+            actions.favorite(song) // A second queued tap must not send another request.
+            assertEquals(1, requests.size)
+            assertEquals(mediaUri(song.path), requests.single().uri)
+            assertEquals(null, actions.saved[mediaUri(song.path)])
+            current = song.copy(path = "/track/2234567890123456789012", title = "Another song")
+            callbacks.single()(NativeActionReply(state = "success", uri = mediaUri(song.path), saved = true))
+            assertEquals(true, actions.saved[mediaUri(song.path)])
+            assertEquals(false, actions.isSaved(current))
+            current = song
+        }
+        rule.onNodeWithContentDescription("Сохранено: действия").performClick()
+        rule.onNodeWithText("Удалить из медиатеки").assertIsDisplayed()
+        rule.onNodeWithText("Добавить в плейлист").assertIsDisplayed()
+        screenshot("saved-actions-fixture", "native-actions-sheet")
+        rule.onNodeWithText("Удалить из медиатеки").performClick()
+        rule.runOnIdle {
+            assertEquals("setSaved", requests.last().kind)
+            assertEquals(false, requests.last().saved)
+            callbacks.last()(NativeActionReply(state = "success", uri = mediaUri(song.path), saved = false))
+            assertEquals(false, actions.isSaved(song))
+        }
+    }
+
+    @Test fun playlistPickerAddsSelectedSongAndUnknownCreationDoesNotRetry() {
+        lateinit var actions: NativeLibraryActions
+        val requests = mutableListOf<NativeActionRequest>()
+        val callbacks = mutableListOf<(NativeActionReply) -> Unit>()
+        val destination = MobileBrowseItem("/playlist/1234567890123456789012", "My destination", "My playlist", albumArt, "playlist")
+        rule.setContent { SpotifyTheme {
+            actions = rememberNativeLibraryActions { request, callback -> requests.add(request); callbacks.add(callback) }
+            NativeActionsSheet(actions, {}, {})
+        } }
+        rule.runOnIdle { actions.choosePlaylist(song) }
+        rule.runOnIdle {
+            assertEquals("playlists", requests.single().kind)
+            callbacks.single()(NativeActionReply(state = "success", playlists = listOf(destination)))
+        }
+        screenshot("playlist-picker-fixture", "native-actions-sheet")
+        rule.onNodeWithTag("native-playlist-filter").performTextInput("destination")
+        rule.onNodeWithText("My destination").performClick()
+        rule.runOnIdle {
+            assertEquals("addToPlaylist", requests.last().kind)
+            assertEquals(mediaUri(song.path), requests.last().uri)
+            assertEquals(mediaUri(destination.path), requests.last().target)
+            callbacks.last()(NativeActionReply(state = "success", uri = mediaUri(song.path)))
+            assertEquals("", actions.mode)
+            actions.createForm(collaborative = true)
+            actions.name = "Uncertain playlist"
+            actions.create { error("Must not navigate on an unconfirmed creation") }
+            callbacks.last()(NativeActionReply(state = "unknown", code = "timeout"))
+            actions.create { error("Must not retry") }
+            assertEquals(1, requests.count { it.kind == "createPlaylist" })
+            assertEquals(true, requests.last().collaborative)
+        }
+        rule.onNodeWithText("Создать плейлист").assertIsNotEnabled()
+        rule.onNodeWithTag("native-action-error").assertIsDisplayed()
+    }
+
+    @Test fun nativeHomeFiltersAndAlbumSaveDoNotChangeUnrelatedTargets() {
+        val album = MobileBrowseItem("/album/3234567890123456789012", "Music album", kind = "album")
+        val podcast = MobileBrowseItem("/show/4234567890123456789012", "Podcast series", kind = "show")
+        var browse by mutableStateOf(MobileBrowseState(ready = true, items = listOf(album, podcast)))
+        val requests = mutableListOf<NativeActionRequest>()
+        rule.setContent { SpotifyTheme {
+            NativeMobileShell(browse, track, onNavigate = {
+                browse = MobileBrowseState(ready = true, path = it, title = album.title)
+            }, onPlay = { _, _ -> }, onPrevious = {}, onToggle = {}, onNext = {}, onSeek = {}, onFavorite = {},
+                onShuffle = {}, onRepeat = {}, onOpenSettings = {}, onOpenWeb = {},
+                onAction = { request, result -> requests.add(request); result(NativeActionReply(state = "error", code = "permission")) })
+        } }
+        rule.onNodeWithTag("native-tab-0").assertIsSelected()
+        rule.onNodeWithText("Подкасты").performClick()
+        rule.onNodeWithText(album.title).assertDoesNotExist()
+        rule.onNodeWithText(podcast.title).assertIsDisplayed()
+        rule.onNodeWithText("Музыка").performClick()
+        rule.onNodeWithText(podcast.title).assertDoesNotExist()
+        rule.onNodeWithText(album.title).performClick()
+        rule.onNodeWithTag("save:" + album.path).performClick()
+        rule.runOnIdle {
+            assertEquals(mediaUri(album.path), requests.last().uri)
+            assertEquals("setSaved", requests.last().kind)
+        }
+        rule.onNodeWithTag("native-action-message").assertIsDisplayed()
+        rule.onNodeWithTag("save:" + album.path).assertIsEnabled()
     }
 
     @Test fun expandedPlayerSurvivesStateRestoreAndCancelledDrag() {

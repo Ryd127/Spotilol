@@ -25,8 +25,8 @@ android {
         applicationId = if (vivoIsland) "com.spotify.music" else "com.project.lol"
         minSdk = 28
         targetSdk = 36
-        versionCode = 48
-        versionName = if (vivoIsland) "1.2.4-native18-vivo" else "1.2.4-native18"
+        versionCode = 49
+        versionName = if (vivoIsland) "1.2.4-native19-vivo" else "1.2.4-native19"
         manifestPlaceholders["spotilolAppLabel"] = if (vivoIsland) "Spotilol Vivo" else "@string/app_name"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {

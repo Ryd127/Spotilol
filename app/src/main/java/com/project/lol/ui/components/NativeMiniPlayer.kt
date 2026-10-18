@@ -47,7 +47,8 @@ data class NativeMiniTrack(
     val duration: Long = 0L,
     val favorite: Boolean = false,
     val shuffle: Boolean = false,
-    val repeat: String = "false"
+    val repeat: String = "false",
+    val uri: String = ""
 )
 
 @Composable

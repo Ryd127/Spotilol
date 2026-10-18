@@ -45,6 +45,13 @@ function environment(){
 }
 async function run(){
  const e=environment(),s=e.state;
+ // A mutation during a library fetch queues exactly one forced refresh after it settles.
+ const refresh=environment();let releaseLibrary;const forces=[];
+ refresh.state.checkMediaLib=force=>{forces.push(force);return forces.length===1?new Promise(resolve=>{releaseLibrary=resolve;}):Promise.resolve();};
+ refresh.state.splNativeLoadLibrary();await turns();
+ refresh.state.splNativeInvalidateLibrary(song.uri);refresh.state.splNativeInvalidateLibrary(song.uri);await turns();
+ assert.equal(forces.length,1,'Library invalidation started parallel refreshes');
+ releaseLibrary();await turns();await turns();assert.deepEqual(forces,[false,true],'Mutation was lost behind a stale library fetch');
  const artist=await s.fetchMediaItems('spotify:artist:ArtistA',{native:true});
  assert.equal(artist.details.name,'Artist A');assert.equal(artist.details.image,art('avatar-large',640).url);
  assert.equal(artist.items[0].image,art('large',640).url);assert.equal(e.notifications.length,0,'Native browse leaked into Auto request callbacks');
