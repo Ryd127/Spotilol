@@ -28,6 +28,7 @@ async function run(){
  assert.equal(e.calls.length,1,'Consumed mutation ID was executed again');
  assert.equal(e.result('save').state,'success');
  assert.equal(e.calls[0].method,'PUT');assert.equal(new URL(e.calls[0].url).searchParams.get('uris'),song);
+ assert.equal(e.calls[0].noRetry,true,'Mutation used a retrying native transport');
  assert(!JSON.stringify(e.result('save')).includes('Bearer'),'Credential leaked across UI boundary');
  const denied=env(()=>response({error:{status:403}},403));denied.start('denied','setSaved',{uri:song,saved:true});await turns();
  assert.equal(denied.result('denied').code,'permission');assert.equal(denied.s.splNativeSavedState(song),null);
@@ -41,6 +42,7 @@ async function run(){
  const create=env(()=>response({uri:playlist},201));create.start('create','createPlaylist',{name:'  My playlist  ',collaborative:true});await turns();
  assert.equal(create.result('create').uri,playlist);const body=JSON.parse(create.calls[0].body);
  assert.equal(body.name,'My playlist');assert.equal(body.public,false);assert.equal(body.collaborative,true);
+ assert.equal(create.calls[0].noRetry,true);
  assert(create.calls[0].url.endsWith('/v1/me/playlists'));
  const add=env(()=>response({snapshot_id:'server-snapshot'},201));add.start('add','addToPlaylist',{uri:other,target:playlist});await turns();
  assert.equal(add.result('add').state,'success');assert(add.calls[0].url.endsWith('/playlists/1234567890123456789012/items'));
@@ -79,6 +81,17 @@ async function run(){
  noAuth.start('noauth','setSaved',{uri:song,saved:true});await turns();assert.equal(noAuth.result('noauth').code,'auth');assert.equal(noAuth.calls.length,0);
  const origin=env(()=>response(null));origin.s.location.origin='https://evil.invalid';
  assert.equal(origin.start('origin','setSaved',{uri:song,saved:true}),false);assert.equal(origin.calls.length,0);
+ // Exercise the real JS -> native network adapter; the one-shot flag must survive it.
+ const bridgeSource=fs.readFileSync(require('node:path').join(__dirname,'../app/src/main/java/com/project/lol/webview/injections/ClassicBridge.kt'),'utf8');
+ const bridgeScript=bridgeSource.match(/const val CONTENT = """([\s\S]*?)"""/)[1];
+ let forwarded;const bridgeEnv={window:null,Headers,TextEncoder,AndBridge:{nFetch:async(url,raw)=>{forwarded=JSON.parse(raw);return JSON.stringify({status:204,body:'',headers:{}});}}};
+ bridgeEnv.window=bridgeEnv;vm.runInNewContext(bridgeScript,bridgeEnv);
+ await bridgeEnv.mngFetch('https://api.spotify.com/v1/me/playlists',{method:'POST',body:'{}',noRetry:true});
+ assert.equal(forwarded.noRetry,true);
+ await bridgeEnv.mngFetch('https://api.spotify.com/v1/me',{method:'GET'});assert.equal(forwarded.noRetry,false);
+ const nativeBridge=fs.readFileSync(require('node:path').join(__dirname,'../app/src/main/java/com/project/lol/bridge/SpotifyBridge.kt'),'utf8');
+ const policy=fs.readFileSync(require('node:path').join(__dirname,'../app/src/main/java/com/project/lol/bridge/NativeRequestPolicy.kt'),'utf8');
+ assert(policy.includes('retryOnConnectionFailure(false)')&&policy.includes('override fun isOneShot() = true')&&nativeBridge.includes('opts.optBoolean("noRetry", false)'));
  console.log('PASS: native library/playlist actions, confirmed-only saves, contextual targets, editable playlists, duplicate/stale/timeout/error/origin guards.');
 }
 run().catch(e=>{console.error(e);process.exitCode=1;});

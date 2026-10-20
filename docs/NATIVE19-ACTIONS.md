@@ -65,10 +65,18 @@ The existing Spotilol playback engine and transport commands are retained.
 
 Commands validate URI type/ID, origin and names. Repeated dispatch of the same mutation
 ID reuses its result, and pending operations have resource-specific locks. There is no
-automatic mutation retry. Timeout/network/ambiguous server success or account change
+automatic mutation retry: these commands also select a separate native HTTP client
+with connection-failure retries disabled and one-shot request bodies, including empty
+DELETE bodies. The latter also prevents a `503 Retry-After: 0` replay. Loopback HTTP
+unit tests exercise POST/DELETE and prove that legacy requests retain their old policy.
+Timeout/network/ambiguous server success or account change
 produces an explicit unconfirmed result: check the library before trying again. No
 green check, navigation or automatic second creation is fabricated on such a result.
-Tokens remain in the existing WebView memory and are not written to native UI/logs.
+Authorization uses the existing authenticated transport: the origin-guarded native
+network adapter forwards headers only to allowlisted Spotify hosts, with redirects
+disabled. Tokens are not returned to the display controller or written to logs. The
+JS deadline is 10 seconds; its cancellation cannot stop an already-dispatched native
+request, which has its own bounded timeout. Late replies cannot paint a success.
 
 ## Verification and remaining scope
 

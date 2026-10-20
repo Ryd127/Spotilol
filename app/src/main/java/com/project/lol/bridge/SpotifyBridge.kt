@@ -3,7 +3,6 @@ package com.project.lol.bridge
 import android.app.Activity
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import com.project.lol.security.WebSecurityPolicy
 import com.project.lol.security.BoundedInput
@@ -337,6 +336,7 @@ class SpotifyBridge(activityRef: WeakReference<Activity>) {
             .connectTimeout(10, TimeUnit.SECONDS).readTimeout(10, TimeUnit.SECONDS)
             .callTimeout(15, TimeUnit.SECONDS).build()
     }
+    private val oneShotFetchClient by lazy { NativeRequestPolicy.oneShotClient(fetchClient) }
 
     fun nFetch(url: String, optsJson: String?): String {
         return try {
@@ -372,12 +372,11 @@ class SpotifyBridge(activityRef: WeakReference<Activity>) {
             if (WebSecurityPolicy.isCookieHost(url)) {
                 CookieManager.getInstance().getCookie(url)?.takeIf { it.isNotEmpty() }?.let { builder.header("Cookie", it) }
             }
-            val requestBody = when (method) {
-                "GET", "HEAD" -> { require(body.isNullOrEmpty()); null }
-                "POST", "PUT", "PATCH" -> (body ?: "").toRequestBody(headers.optString("Content-Type").toMediaTypeOrNull())
-                else -> body?.toRequestBody(headers.optString("Content-Type").toMediaTypeOrNull())
-            }
-            fetchClient.newCall(builder.method(method, requestBody).build()).execute().use { response ->
+            val oneShot = opts.optBoolean("noRetry", false)
+            val requestBody = NativeRequestPolicy.body(method, body,
+                headers.optString("Content-Type").toMediaTypeOrNull(), oneShot)
+            val client = if (oneShot) oneShotFetchClient else fetchClient
+            client.newCall(builder.method(method, requestBody).build()).execute().use { response ->
                 require(response.code !in setOf(300, 301, 302, 303, 305, 307, 308)) { "Native redirects are not permitted" }
                 if (WebSecurityPolicy.isCookieHost(url)) {
                     response.headers.values("Set-Cookie").forEach { CookieManager.getInstance().setCookie(url, it) }

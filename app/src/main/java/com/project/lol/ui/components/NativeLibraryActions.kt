@@ -43,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
@@ -199,12 +200,12 @@ internal fun NativeSaveButton(
 
 @Composable
 private fun ActionRow(icon: ImageVector, title: String, subtitle: String = "", enabled: Boolean = true,
-    image: String = "", onClick: () -> Unit) {
+    image: String = "", color: Color = Color.White, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 64.dp)
         .clickable(enabled = enabled, role = Role.Button, onClick = onClick).padding(horizontal = 24.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(18.dp)) {
         if (image.isNotBlank()) Cover(image, Modifier.size(48.dp))
-        else Icon(icon, null, tint = if (enabled) Color.White else actionGrey, modifier = Modifier.size(26.dp))
+        else Icon(icon, null, tint = if (enabled) color else actionGrey, modifier = Modifier.size(26.dp))
         Column(Modifier.weight(1f)) {
             Text(title, color = if (enabled) Color.White else actionGrey, fontSize = 16.sp, fontWeight = FontWeight.Medium)
             if (subtitle.isNotBlank()) Text(subtitle, color = actionGrey, fontSize = 13.sp)
@@ -245,6 +246,7 @@ internal fun NativeActionsSheet(
                     Text("Как назовём плейлист?", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold,
                         textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp))
                     BasicTextField(value = actions.name, onValueChange = { actions.name = it.take(100) }, singleLine = true,
+                        cursorBrush = SolidColor(actionGreen),
                         enabled = !actions.working && !actions.uncertain,
                         textStyle = TextStyle(color = Color.White, fontFamily = FontFamily.SansSerif,
                             fontSize = 26.sp, textAlign = TextAlign.Center),
@@ -270,6 +272,7 @@ internal fun NativeActionsSheet(
                     actions.target?.let { Text(it.title, color = actionGrey, maxLines = 1, overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(horizontal = 24.dp, vertical = 6.dp)) }
                     BasicTextField(filter, { filter = it.take(100) }, singleLine = true,
+                        cursorBrush = SolidColor(actionGreen),
                         textStyle = TextStyle(color = Color.White, fontSize = 15.sp),
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp)
                             .clip(RoundedCornerShape(5.dp)).background(Color(0xFF363636)).padding(14.dp)
@@ -307,6 +310,7 @@ internal fun NativeActionsSheet(
                     val saved = actions.isSaved(item)
                     if (mediaUri(item.path).isNotBlank()) ActionRow(if (saved) NativeIcons.CheckCircle else NativeIcons.PlusCircle,
                         if (saved) "Удалить из медиатеки" else "Добавить в медиатеку",
+                        color = if (saved) actionGreen else Color.White,
                         enabled = actions.pending[mediaUri(item.path)] != true && !actions.uncertain) { actions.setSaved(item, !saved) }
                     if (item.kind in listOf("track", "episode")) ActionRow(NativeIcons.PlaylistAdd, "Добавить в плейлист") {
                         actions.choosePlaylist(item)

@@ -15,7 +15,7 @@ object NativeActionsJs {
           var fetcher=window.mngFetch||window.oriFetch||window.fetch;
           var response=await fetcher('https://api.spotify.com/v1'+path,{method:method||'GET',signal:signal,
             headers:{Authorization:token,'Content-Type':'application/json'},
-            body:body?JSON.stringify(body):undefined,redirect:'error'});
+            body:body?JSON.stringify(body):undefined,redirect:'error',noRetry:method!=='GET'});
           if(token!==window.spotAuthToken)throw failure(method==='GET'?'auth':'unknown');
           if(!response.ok)throw failure(codeFor(response.status));
           var text=await response.text();

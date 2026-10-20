@@ -25,7 +25,8 @@ object ClassicBridge {
                 var raw = await AndBridge.nFetch(url, JSON.stringify({
                     method: o.method || 'GET',
                     headers: headers,
-                    body: body
+                    body: body,
+                    noRetry: o.noRetry === true
                 }));
                 var data;
                 try { data = JSON.parse(raw); }
