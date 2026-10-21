@@ -1,4 +1,9 @@
 <resources>
+    <string name="native_sort_heading">歌曲排序</string>
+    <string name="native_sort_original">原始顺序</string>
+    <string name="native_sort_title">歌曲名称</string>
+    <string name="native_sort_ascending">升序</string>
+    <string name="native_sort_descending">降序</string>
     <string name="app_name">Spotilol</string>
     <string name="aa_playlists">歌单</string>
     <string name="aa_albums">专辑</string>

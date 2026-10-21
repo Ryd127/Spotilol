@@ -42,9 +42,9 @@ ascending/descending. Choice is stored locally per route; the existing
 Collation follows Android's current locale. Missing names stay last in both
 directions; equal keys retain their original order. The original list is not
 mutated, and opening/sorting adds no network requests. New native labels have
-English/Russian resources (Artist reuses the existing translated resource);
-untranslated labels follow Android's English fallback. This is not a completed
-Android localization rollout.
+resources for all current Android string-resource locales (Artist reuses the
+existing translated resource); other languages follow Android's English fallback.
+This is not a completed Android localization rollout or Spotify-wide language parity.
 
 The Web Player's existing columns menu also gains Artist, with playlist/album
 metadata support for both `artists.items[].profile.name` and `artists[].name`,

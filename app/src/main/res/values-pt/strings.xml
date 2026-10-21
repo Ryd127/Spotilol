@@ -1,5 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="native_sort_heading">Ordenar músicas</string>
+    <string name="native_sort_original">Ordem original</string>
+    <string name="native_sort_title">Título</string>
+    <string name="native_sort_ascending">A–Z</string>
+    <string name="native_sort_descending">Z–A</string>
     <string name="app_name">Spotilol</string>
     <string name="aa_playlists">Playlists</string>
     <string name="aa_albums">Álbuns</string>
