@@ -314,6 +314,31 @@ class NativeUiRegressionTest {
         rule.runOnIdle { assertEquals(1, requests.size) }
     }
 
+    @Test fun nativeArtistSortSelectsRestoresAndKeepsOriginalData() {
+        val restoration = StateRestorationTester(rule)
+        var selected by mutableStateOf(NativePlaylistOrder.ORIGINAL)
+        val tracks = listOf(song.copy(subtitle = "Zebra"), song.copy(path = "/track/2234567890123456789012", subtitle = "Alpha"))
+        restoration.setContent {
+            SpotifyTheme {
+                NativePlaylistSortButton("/playlist/fixture", selected) { selected = it }
+            }
+        }
+        rule.onNodeWithTag("native-sort-open").performClick()
+        rule.onNodeWithTag("native-sort-ARTIST_ASC").performScrollTo().performClick()
+        rule.runOnIdle {
+            assertEquals(NativePlaylistOrder.ARTIST_ASC, selected)
+            assertEquals("Alpha", orderNativeTracks(tracks, selected).first().subtitle)
+            assertEquals("Zebra", tracks.first().subtitle)
+        }
+        rule.onNodeWithTag("native-sort-open").performClick()
+        rule.onNodeWithTag("native-sort-ARTIST_ASC").assertIsSelected()
+        screenshot("artist-sort-fixture")
+        restoration.emulateSavedInstanceStateRestore()
+        rule.onNodeWithTag("native-sort-ARTIST_ASC").performScrollTo().assertIsSelected()
+        rule.onNodeWithTag("native-sort-ORIGINAL").performScrollTo().performClick()
+        rule.runOnIdle { assertEquals(NativePlaylistOrder.ORIGINAL, selected) }
+    }
+
     @Test fun largeTextPlayerKeepsFooterReachable() {
         rule.setContent {
             val density = LocalDensity.current

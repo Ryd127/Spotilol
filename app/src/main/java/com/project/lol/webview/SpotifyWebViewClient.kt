@@ -455,6 +455,8 @@ class SpotifyWebViewClient(
             append("window.__splTakeControl=$takeControl;\n")
             append("window.__splHideEmpty=$hideEmptyPlayer;\n")
             append("window.__splPlaylistSortEnabled=$playlistSortEnabled;\n")
+            append("window.__splSortArtistLabel=" + org.json.JSONObject.quote(
+                view.context.getString(com.project.lol.R.string.widget_studio_info_artist)) + ";\n")
             append("window.__spicyLyricsEnabled=$spicyLyricsEnabled;\n")
             append("window.__splShowScrollbar=$showScrollbar;\n")
             append("window.__splHideTopBar=$hideTopBar;\n")

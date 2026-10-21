@@ -50,6 +50,7 @@ import androidx.compose.material3.ProvideTextStyle
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -71,6 +72,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.font.FontFamily
@@ -368,6 +370,25 @@ fun NativeMobileShell(
         kind = if (track.uri.startsWith("spotify:episode:")) "episode" else "track")
     val pageItem = MobileBrowseItem(browse.path, browse.title, browse.creator, browse.cover,
         kind = browse.path.split('/').getOrNull(1).orEmpty())
+    val sortPrefs = LocalContext.current.getSharedPreferences("spotilol_prefs", android.content.Context.MODE_PRIVATE)
+    var sortEnabled by remember { mutableStateOf(sortPrefs.getBoolean("PlaylistSortEnabled", true)) }
+    val sortPrefKey = "NativePlaylistSort:${browse.path}"
+    var playlistOrder by remember(browse.path) {
+        mutableStateOf(NativePlaylistOrder.parse(sortPrefs.getString(sortPrefKey, null)))
+    }
+    DisposableEffect(sortPrefs, sortPrefKey) {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { prefs, changed ->
+            if (changed == "PlaylistSortEnabled") sortEnabled = prefs.getBoolean("PlaylistSortEnabled", true)
+            if (changed == sortPrefKey) playlistOrder = NativePlaylistOrder.parse(prefs.getString(sortPrefKey, null))
+        }
+        sortPrefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { sortPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+    val canSort = sortEnabled && (browse.path.startsWith("/playlist/") || browse.path.startsWith("/album/") ||
+        browse.path == "/collection/tracks")
+    val orderedTracks = remember(browse.items, canSort, playlistOrder) {
+        orderNativeTracks(browse.items, if (canSort) playlistOrder else NativePlaylistOrder.ORIGINAL)
+    }
     LaunchedEffect(track.uri) { if (track.uri.isNotBlank()) actions.readSaved(playingItem) }
     LaunchedEffect(browse.path) { if (mediaUri(browse.path).isNotBlank()) actions.readSaved(pageItem) }
     fun showMenu(item: MobileBrowseItem) {
@@ -533,7 +554,7 @@ fun NativeMobileShell(
                                         Box(Modifier.size(55.dp).clip(CircleShape).background(green)
                                             .clickable {
                                                 if (startedContext == browse.path && track.title.isNotBlank()) onToggle()
-                                                else browse.items.firstOrNull(::playable)?.let(::clickItem)
+                                                else orderedTracks.firstOrNull(::playable)?.let(::clickItem)
                                             }, contentAlignment = Alignment.Center) {
                                             Icon(if(track.playing && startedContext == browse.path) NativeIcons.Pause else NativeIcons.Play,
                                                 "Воспроизвести", modifier = Modifier.size(29.dp), tint = Color.Black)
@@ -550,7 +571,15 @@ fun NativeMobileShell(
                                 item { Text("Популярные", color = white, fontSize = 21.sp, fontWeight = FontWeight.Bold,
                                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) }
                             }
-                            items(browse.items, key = { it.path + it.title }) { item ->
+                            if (canSort && browse.items.isNotEmpty()) {
+                                item {
+                                    NativePlaylistSortButton(browse.path, playlistOrder) {
+                                        playlistOrder = it
+                                        sortPrefs.edit().putString(sortPrefKey, it.name).apply()
+                                    }
+                                }
+                            }
+                            items(orderedTracks, key = { it.path + it.title }) { item ->
                                 TrackRow(item, { clickItem(item) }, { showMenu(item) })
                             }
                         }

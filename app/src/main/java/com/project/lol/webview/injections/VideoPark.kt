@@ -1,94 +1,116 @@
 package com.project.lol.webview.injections
 
 /*
- * CREDIT: Spotilol - Background Video Park/Restore
- * GitHub: https://github.com/AldySan
- *
- * Parks canvas video sources when the app goes to background and
- * restores them on resume. Spotify's React state never notices the
- * src was stripped, so without this, returning to the app leaves a
- * sourceless <video> = blank Now Playing canvas.
- *
- * Extracted from WorkerNeutralize so it runs independently of the
- * BlockServiceWorker toggle. Video park/restore is a battery/
- * bandwidth optimization, not an SW feature.
- *
- * Parking: stash src + timecode + playing state, then kill the src.
- * Restore: put it back, seek to stashed time, resume if it was playing.
- * blob: URLs (MediaSource) can't be re-attached after load(), so
- * those are left alone.
+ * CREDIT: Spotilol - Background Video Park/Restore. https://github.com/AldySan
+ * Pause only explicitly identified decorative Canvas. Muted/loop/cover alone
+ * do not distinguish Canvas from music videos and podcasts. Keep sources and
+ * timecodes intact (including MediaSource); never reload the audio transport.
  */
-
 object VideoPark {
     const val CONTENT = """
         (function(){
             if(window.__splVideoParkInit) return;
             window.__splVideoParkInit = true;
-
-            try {
-                var parked = [];
-
-                function isCanvasVid(v){
-                    try{
-                        if(v.id === 'spl-canvas') return false;
-                        if(v.muted) return true;
-                        if(v.hasAttribute && v.hasAttribute('loop')) return true;
-                        if(v.style && v.style.objectFit === 'cover') return true;
-                    }catch(e){}
-                    return false;
-                }
-
-                function parkLive(){
-                    var vs = document.querySelectorAll('video');
-                    for(var i=0;i<vs.length;i++){
-                        var v = vs[i];
-                        if(v.__splParked) continue;
-                        if(!isCanvasVid(v)) continue;
-                        var src = v.currentSrc || v.getAttribute('src') || '';
-                        /* blob: = MediaSource, can't be re-attached after load().
-                           Leave those alone rather than strand them. */
-                        if(!src || src.startsWith('blob:')) continue;
-                        v.__splParked = true;
-                        parked.push({el:v, src:src, t:(v.currentTime||0), playing:(!v.paused && !v.ended)});
-                        try{ v.pause(); }catch(e){}
-                        try{ v.removeAttribute('src'); }catch(e){}
-                        try{ v.load(); }catch(e){}
+            var selector = '[data-testid="canvas-container"],[data-testid="canvas"]';
+            var parked = new Map(), observer = null, background = !!window.__splBg;
+            function isCanvas(v){
+                return !!(v && v.tagName === 'VIDEO' && v.id !== 'spl-canvas' &&
+                    v.closest && v.closest(selector));
+            }
+            function active(){
+                return !!window.__splPowerSavePref || background || document.visibilityState === 'hidden';
+            }
+            function source(v){
+                var sources = v.querySelectorAll('source'), parts = [v.getAttribute('src') || ''];
+                for(var i=0;i<sources.length;i++) parts.push(sources[i].getAttribute('src') || '');
+                return parts.join('\n');
+            }
+            function restore(v, resume){
+                var saved = parked.get(v);
+                if(!saved) return;
+                parked.delete(v);
+                try {
+                    // Do not overwrite a method/attribute Spotify replaced while parked.
+                    if(v.play === saved.blockPlay){
+                        if(saved.ownPlay) Object.defineProperty(v, 'play', saved.ownPlay);
+                        else delete v.play;
                     }
-                    return parked.length;
-                }
-
-                window.__splParkVideos = function(){
-                    parkLive();
-                };
-
-                window.__splRestoreVideos = function(){
-                    if(!parked.length) return;
-                    for(var i=0;i<parked.length;i++){
-                        var b = parked[i];
-                        var v = b.el;
-                        if(!v || !v.isConnected) continue;
-                        /* Spotify already swapped in a fresh src (track changed
-                           while backgrounded) - its own source wins. */
-                        if(v.getAttribute('src') || v.currentSrc){ v.__splParked = false; continue; }
-                        try{
-                            v.src = b.src;
-                            v.currentTime = b.t || 0;
-                            if(b.playing){
-                                var p = v.play();
-                                if(p) p.catch(function(){});
-                            }
-                        }catch(e){}
-                        v.__splParked = false;
+                    if(v.getAttribute('preload') === 'none'){
+                        if(saved.preload === null) v.removeAttribute('preload');
+                        else v.setAttribute('preload', saved.preload);
                     }
-                    parked.length = 0;
-                    try{ AndBridge.dbg('s','videos restored from background park'); }catch(e){}
+                    // A new track/source belongs to Spotify, not to this snapshot.
+                    if(resume && v.isConnected && source(v) === saved.source && saved.playing){
+                        var p = v.play();
+                        if(p && p.catch) p.catch(function(){});
+                    }
+                } catch(e){}
+            }
+            function park(v){
+                if(!isCanvas(v) || parked.has(v)) return;
+                var saved = {source:source(v), playing:!v.paused && !v.ended,
+                    preload:v.getAttribute('preload'), ownPlay:Object.getOwnPropertyDescriptor(v, 'play')};
+                saved.blockPlay = function(){
+                    if(!active() || !isCanvas(v)){
+                        restore(v, false);
+                        return v.play.apply(v, arguments);
+                    }
+                    // Remember an explicit play request without spinning up a decoder.
+                    saved.source = source(v);
+                    saved.playing = true;
+                    return Promise.resolve();
                 };
-
-                document.addEventListener('visibilitychange', function(){
-                    if(document.visibilityState === 'hidden') window.__splParkVideos();
-                    else window.__splRestoreVideos();
+                parked.set(v, saved);
+                try { Object.defineProperty(v, 'play', {value:saved.blockPlay, configurable:true, writable:true}); } catch(e){}
+                try { v.pause(); v.setAttribute('preload', 'none'); } catch(e){}
+            }
+            function scan(root){
+                if(!root) return;
+                park(root);
+                if(root.querySelectorAll){
+                    var videos = root.querySelectorAll('video');
+                    for(var i=0;i<videos.length;i++) park(videos[i]);
+                }
+            }
+            function prune(){
+                parked.forEach(function(saved, v){
+                    if(!v.isConnected || !isCanvas(v)) restore(v, false);
                 });
-            } catch(e){}
+            }
+            window.__splSyncCanvasPower = function(){
+                if(!active()){
+                    if(observer) observer.disconnect();
+                    observer = null;
+                    parked.forEach(function(saved, v){ restore(v, true); });
+                    return;
+                }
+                prune();
+                scan(document);
+                if(observer || !document.documentElement) return;
+                observer = new MutationObserver(function(mutations){
+                    if(!active()) return;
+                    prune();
+                    mutations.forEach(function(m){
+                        if(m.type === 'attributes') scan(m.target);
+                        else for(var i=0;i<m.addedNodes.length;i++) scan(m.addedNodes[i]);
+                    });
+                });
+                observer.observe(document.documentElement, {childList:true, subtree:true,
+                    attributes:true, attributeFilter:['data-testid']});
+            };
+            window.__splParkVideos = function(){ background = true; window.__splSyncCanvasPower(); };
+            window.__splRestoreVideos = function(){ background = false; window.__splSyncCanvasPower(); };
+            document.addEventListener('visibilitychange', window.__splSyncCanvasPower);
+            document.addEventListener('DOMContentLoaded', window.__splSyncCanvasPower, {once:true});
+            document.addEventListener('play', function(event){
+                var v = event.target;
+                if(!active() || !isCanvas(v)) return;
+                park(v);
+                var saved = parked.get(v);
+                if(saved){ saved.source = source(v); saved.playing = true; }
+                try { v.pause(); } catch(e){}
+            }, true);
+            window.__splSyncCanvasPower();
         })();
     """
 }

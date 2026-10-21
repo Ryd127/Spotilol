@@ -71,7 +71,7 @@ assert.equal(probe.qaCards.fromAnchor(overlay).title,'My playlist','Overlay lost
 assert.equal(probe.qaCards.fromAnchor(other.children[0]).image,'https://i.scdn.co/image/wrong','Neighbouring cover mixed');
 assert.equal(probe.qaCards.allowedPath('/intl-es-419/playlist/Good'),'/playlist/Good');
 const gradle=fs.readFileSync(path.join(root,'app/build.gradle.kts'),'utf8');
-assert(gradle.includes('applicationId = if (vivoIsland) "com.spotify.music" else "com.project.lol"')&&gradle.includes('versionCode = 49'));
+assert(gradle.includes('applicationId = if (vivoIsland) "com.spotify.music" else "com.project.lol"')&&gradle.includes('versionCode = 50'));
 const manifest=fs.readFileSync(path.join(root,'app/src/main/AndroidManifest.xml'),'utf8');
 assert(manifest.includes('android:authorities="${applicationId}.artwork"')&&!manifest.includes('com.spotify.mobile.android.mediaapi'));
 const host=fs.readFileSync(path.join(source,'webview/WebViewHost.kt'),'utf8');
@@ -116,4 +116,5 @@ assert(!fs.readFileSync(path.join(source,'webview/injections/AndroidTracker.kt')
  'Never invent a replacement artwork CDN key');
 require('node:child_process').execFileSync(process.execPath,[path.join(__dirname,'verify-native-data.cjs')],{stdio:'inherit'});
 require('node:child_process').execFileSync(process.execPath,[path.join(__dirname,'verify-native-actions.cjs')],{stdio:'inherit'});
+require('node:child_process').execFileSync(process.execPath,[path.join(__dirname,'verify-power-sort.cjs')],{stdio:'inherit'});
 console.log('PASS: '+checked+' embedded scripts; metadata pacing/seek/restart/artwork; native play/navigation; independent package/provider; guarded bridge and transport.');

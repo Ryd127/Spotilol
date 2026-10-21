@@ -1,7 +1,7 @@
 # Building Spotilol
 
-Current feature-branch source version: **1.2.4-native18 (48)**
-Application ID: `com.project.lol` by default; explicit Vivo build `-PvivoIsland=true` uses `com.spotify.music` and versionName `1.2.4-native18-vivo` (conflicts with installed official Spotify).
+Current feature-branch source version: **1.2.4-native20 (50)**
+Application ID: `com.project.lol` by default; explicit Vivo build `-PvivoIsland=true` uses `com.spotify.music` and versionName `1.2.4-native20-vivo` (conflicts with installed official Spotify).
 
 This branch combines upstream Spotilol 1.2.4 with the existing native Android interface, guarded playback controls, build hardening, Android 16 KiB page-size compatibility and origin-scoped WebView bridge. Stable main remains separate and unchanged. See `docs/INTEGRATION-1.2.4.md` for provenance and device-test limitations.
 
@@ -10,6 +10,8 @@ Native16 adds the first UI-only motion/mini-player prototype described in `docs/
 Native17 hardens that prototype for short screens, large text, interrupted dragging, restored player state and track changes during seeking. See `docs/NATIVE17-UI-POLISH.md` for the exact scope and remaining device checks.
 
 Native18 corrects the data/launch/artwork/seek architecture after real Native17 failures. See `docs/NATIVE18-RECOVERY.md`; the workflow now verifies both identities and runs an isolated Android UI emulator suite. `-PuiTestAbi=x86_64` is exclusively for that suite, not a phone release.
+
+Native19 adds guarded native library/playlist actions; see `docs/NATIVE19-ACTIONS.md`. Native20 removes global timer throttling, limits video power saving to explicit Canvas containers and adds native/Web Artist sorting; see `docs/NATIVE20-POWER-SORT.md` for scope and test limitations.
 
 The checked-in app tree is the actual build input. Historical scripts under `ci/hybrid/` reconstruct earlier experiments only; do not run them over this branch or replace its source with an upstream download.
 

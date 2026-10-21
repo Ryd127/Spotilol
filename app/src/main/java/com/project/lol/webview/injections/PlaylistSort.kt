@@ -44,6 +44,7 @@ object PlaylistSort {
 
             var SORT_FIELDS = [
                 ['TITLE_AND_ARTIST', '', 'Title'],
+                ['ARTIST', 'ARTIST', 'Artist'],
                 ['ALBUM', 'ALBUM', 'Album'],
                 ['ADDED_AT', 'ADDED_AT', 'Date added'],
                 ['RELEASE_DATE', 'RELEASE_DATE', 'Release date'],
@@ -55,7 +56,7 @@ object PlaylistSort {
             function sortKey(){ return keyOf(state); }
 
             function currentUri(){
-                var path = location.pathname;
+                var path = location.pathname.replace(/^\/intl-[^/]+(?=\/)/, '');
                 if (path === uriPath) return uriVal;
                 uriPath = path;
                 var m = path.match(/^\/playlist\/([A-Za-z0-9]+)/);
@@ -84,11 +85,21 @@ object PlaylistSort {
                 try { localStorage.setItem(LS_KEY, JSON.stringify(map)); } catch(e){}
             }
 
+            function artistName(track){
+                var artists = track && track.artists;
+                var list = artists && (artists.items || artists);
+                if (!Array.isArray(list)) return null;
+                var names = list.map(function(a){
+                    var name = a && ((a.profile && a.profile.name) || a.name);
+                    return typeof name === 'string' ? name.trim() : '';
+                }).filter(Boolean);
+                return names.length ? names.join(', ') : null;
+            }
             function valueOf(item, field){
-                if (albumPage()) {
-                    var t = item && item.track;
-                    if (!t) return null;
+                var t = item && item.track;
+                if (t) {
                     if (field === 'TITLE_AND_ARTIST') return t.name || null;
+                    if (field === 'ARTIST') return artistName(t);
                     if (field === 'DURATION') return (t.duration && t.duration.totalMilliseconds) || 0;
                     return null;
                 }
@@ -96,6 +107,7 @@ object PlaylistSort {
                 if (!d) return null;
                 switch (field) {
                     case 'TITLE_AND_ARTIST': return d.name || null;
+                    case 'ARTIST': return artistName(d);
                     case 'ALBUM': return (d.albumOfTrack && d.albumOfTrack.name) || null;
                     case 'DURATION': return (d.trackDuration && d.trackDuration.totalMilliseconds) || 0;
                     case 'RELEASE_DATE': return (d.albumOfTrack && d.albumOfTrack.date && d.albumOfTrack.date.isoString) || null;
@@ -354,7 +366,7 @@ object PlaylistSort {
 
             var supportedSeen = {};
             function fieldSupported(field){
-                if (albumPage()) return field === 'TITLE_AND_ARTIST' || field === 'DURATION';
+                if (albumPage()) return field === 'TITLE_AND_ARTIST' || field === 'ARTIST' || field === 'DURATION';
                 if (field !== 'ADDED_AT') return true;
                 if (supportedSeen[field]) return true;
                 var ul = columnsMenu();
@@ -398,7 +410,8 @@ object PlaylistSort {
                     for (var i = 0; i < SORT_FIELDS.length; i++) {
                         var field = SORT_FIELDS[i][0];
                         if (!fieldSupported(field)) continue;
-                        var label = columnLabel(ul, SORT_FIELDS[i][1], labels[field] || SORT_FIELDS[i][2]);
+                        var fallback = field === 'ARTIST' ? (window.__splSortArtistLabel || 'Artist') : SORT_FIELDS[i][2];
+                        var label = columnLabel(ul, SORT_FIELDS[i][1], labels[field] || fallback);
                         var active = (state && state.field === field) ? state.order : '';
                         var li = row.cloneNode(true);
                         var btn = li.querySelector('button');

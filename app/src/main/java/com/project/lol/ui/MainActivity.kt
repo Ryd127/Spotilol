@@ -1610,6 +1610,7 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
         webView?.evaluateJavascript("""
             try {
                 window.__splBg = true;
+                if(window.__splParkVideos) window.__splParkVideos();
                 if(typeof pfint !== 'undefined' && pfint) { clearInterval(pfint); pfint = null; window.__splWasPfint = true; }
                 if(typeof afint !== 'undefined' && afint) { clearInterval(afint); afint = null; window.__splWasAfint = true; }
                 if(typeof cssint !== 'undefined' && cssint) { clearInterval(cssint); cssint = null; window.__splWasCssint = true; }
@@ -1660,6 +1661,7 @@ class MainActivity : ComponentActivity(), WebViewHost.UiHost {
             view.evaluateJavascript("""
                 try {
                     window.__splBg = false;
+                    if(window.__splRestoreVideos) window.__splRestoreVideos();
                     if(window.__splWasPfint) { window.__splWasPfint = false; firstFuck(); }
                     if(window.__splWasAfint) { window.__splWasAfint = false; addAutoFeatures(); }
                     if(window.__splWasCssint) { window.__splWasCssint = false; addCSSJSHack(); }

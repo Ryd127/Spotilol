@@ -502,7 +502,7 @@ jobs:
           adb pull /sdcard/Pictures/SpotilolUiRegression ui-screenshots/ || true
           adb logcat -d -t 1500 > ui-logcat.txt || true
           if [[ '${{ steps.ui_tests.outcome }}' == 'success' ]]; then
-            for shot in home-fixture artist-fixture search-fixture player-fixture player-restored-fixture player-large-text-fixture create-menu-fixture create-name-fixture saved-actions-fixture playlist-picker-fixture; do
+            for shot in home-fixture artist-fixture search-fixture player-fixture player-restored-fixture player-large-text-fixture create-menu-fixture create-name-fixture saved-actions-fixture playlist-picker-fixture artist-sort-fixture; do
               test -s "ui-screenshots/SpotilolUiRegression/${shot}.png"
             done
           fi
