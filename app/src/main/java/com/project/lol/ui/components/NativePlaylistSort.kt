@@ -4,6 +4,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -14,6 +15,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberBottomSheetState
+import androidx.compose.material3.SheetValue
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,7 +30,9 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import compose.icons.TablerIcons
 import compose.icons.tablericons.ArrowsSort
 import com.project.lol.R
@@ -86,10 +91,16 @@ internal fun NativePlaylistSortButton(path: String, order: NativePlaylistOrder, 
         Text(orderLabel(order), color = Color(0xFFB3B3B3), fontFamily = FontFamily.SansSerif,
             modifier = Modifier.padding(start = 10.dp))
     }
-    if (open) ModalBottomSheet(onDismissRequest = { open = false }, containerColor = Color(0xFF202020)) {
+    if (open) {
+        val sheet = rememberBottomSheetState(initialValue = SheetValue.Hidden,
+            enabledValues = setOf(SheetValue.Hidden, SheetValue.Expanded))
+        ModalBottomSheet(onDismissRequest = { open = false }, sheetState = sheet,
+            containerColor = Color(0xFF242424), contentColor = Color.White,
+            shape = RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)) {
         Column(Modifier.fillMaxWidth().heightIn(max = (LocalConfiguration.current.screenHeightDp * .7f).dp)
-            .verticalScroll(rememberScrollState()).padding(bottom = 20.dp)) {
+            .verticalScroll(rememberScrollState()).padding(bottom = 20.dp).testTag("native-sort-sheet")) {
             Text(stringResource(R.string.native_sort_heading), color = Color.White, fontFamily = FontFamily.SansSerif,
+                fontSize = 24.sp, fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp))
             NativePlaylistOrder.entries.forEach { option ->
                 Row(Modifier.fillMaxWidth().testTag("native-sort-${option.name}")
@@ -101,5 +112,6 @@ internal fun NativePlaylistSortButton(path: String, order: NativePlaylistOrder, 
                 }
             }
         }
+    }
     }
 }

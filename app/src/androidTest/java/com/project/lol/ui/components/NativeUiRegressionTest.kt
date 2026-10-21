@@ -332,7 +332,7 @@ class NativeUiRegressionTest {
         }
         rule.onNodeWithTag("native-sort-open").performClick()
         rule.onNodeWithTag("native-sort-ARTIST_ASC").assertIsSelected()
-        screenshot("artist-sort-fixture")
+        screenshot("artist-sort-fixture", "native-sort-sheet")
         restoration.emulateSavedInstanceStateRestore()
         rule.onNodeWithTag("native-sort-ARTIST_ASC").performScrollTo().assertIsSelected()
         rule.onNodeWithTag("native-sort-ORIGINAL").performScrollTo().performClick()
